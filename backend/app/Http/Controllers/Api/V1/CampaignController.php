@@ -9,7 +9,9 @@ use App\Http\Resources\MessageResource;
 use App\Jobs\DispatchCampaignJob;
 use App\Jobs\SendSmsJob;
 use App\Models\Campaign;
+use App\Models\Click;
 use App\Models\Message;
+use App\Models\Segment;
 use App\Services\AuditLogger;
 use App\Services\SegmentService;
 use Carbon\Carbon;
@@ -237,11 +239,140 @@ class CampaignController extends Controller
     {
         $this->authorize('view', $campaign);
 
-        $messages = $campaign->messages()
-            ->with(['contact' => fn($q) => $q->withTrashed()->select('id', 'name', 'phone'), 'click'])
-            ->latest()
-            ->paginate($request->integer('per_page', 50));
+        $query = $campaign->messages()
+            ->with(['contact' => fn($q) => $q->withTrashed()->select('id', 'name', 'phone', 'country', 'language'), 'click'])
+            ->latest();
+
+        if ($status = $request->get('status')) {
+            $query->where('status', $status);
+        }
+        if ($clicked = $request->get('clicked')) {
+            if ($clicked === '1') {
+                $query->whereHas('click', fn($q) => $q->where('click_count', '>', 0));
+            } elseif ($clicked === '0') {
+                $query->where(fn($q) => $q
+                    ->whereDoesntHave('click')
+                    ->orWhereHas('click', fn($x) => $x->where('click_count', 0))
+                );
+            }
+        }
+
+        $messages = $query->paginate($request->integer('per_page', 50));
 
         return MessageResource::collection($messages)->response();
+    }
+
+    public function clickedContacts(Request $request, Campaign $campaign): JsonResponse
+    {
+        $this->authorize('view', $campaign);
+
+        $messages = $campaign->messages()
+            ->with(['contact' => fn($q) => $q->withTrashed()->select('id', 'name', 'phone', 'country', 'language'), 'click'])
+            ->whereHas('click', fn($q) => $q->where('click_count', '>', 0))
+            ->latest('updated_at')
+            ->paginate($request->integer('per_page', 50));
+
+        return response()->json([
+            'data' => $messages->map(fn($m) => [
+                'id'         => $m->id,
+                'contact_id' => $m->contact_id,
+                'name'       => $m->contact?->name ?? 'Deleted',
+                'phone'      => $m->contact?->phone,
+                'country'    => $m->contact?->country,
+                'language'   => $m->contact?->language,
+                'click_count'=> $m->click?->click_count ?? 0,
+                'clicked_at' => $m->click?->updated_at,
+                'status'     => $m->status,
+            ]),
+            'meta' => [
+                'total'        => $messages->total(),
+                'current_page' => $messages->currentPage(),
+                'last_page'    => $messages->lastPage(),
+                'per_page'     => $messages->perPage(),
+            ],
+        ]);
+    }
+
+    public function nonClickedContacts(Request $request, Campaign $campaign): JsonResponse
+    {
+        $this->authorize('view', $campaign);
+
+        $messages = $campaign->messages()
+            ->with(['contact' => fn($q) => $q->withTrashed()->select('id', 'name', 'phone', 'country', 'language'), 'click'])
+            ->where('status', 'delivered')
+            ->where(fn($q) => $q
+                ->whereDoesntHave('click')
+                ->orWhereHas('click', fn($x) => $x->where('click_count', 0))
+            )
+            ->latest('updated_at')
+            ->paginate($request->integer('per_page', 50));
+
+        return response()->json([
+            'data' => $messages->map(fn($m) => [
+                'id'         => $m->id,
+                'contact_id' => $m->contact_id,
+                'name'       => $m->contact?->name ?? 'Deleted',
+                'phone'      => $m->contact?->phone,
+                'country'    => $m->contact?->country,
+                'language'   => $m->contact?->language,
+                'status'     => $m->status,
+            ]),
+            'meta' => [
+                'total'        => $messages->total(),
+                'current_page' => $messages->currentPage(),
+                'last_page'    => $messages->lastPage(),
+                'per_page'     => $messages->perPage(),
+            ],
+        ]);
+    }
+
+    public function createSegmentFromClicks(Request $request, Campaign $campaign): JsonResponse
+    {
+        $this->authorize('view', $campaign);
+
+        $type = $request->validate(['type' => 'required|in:clicked,non_clicked'])['type'];
+        $name = $request->input('name', "{$campaign->name} — " . ($type === 'clicked' ? 'Clicked' : 'Not Clicked'));
+
+        // Collect contact IDs
+        $query = $campaign->messages()
+            ->whereNotNull('contact_id')
+            ->whereHas('contact', fn($q) => $q->where('opted_in', true));
+
+        if ($type === 'clicked') {
+            $query->whereHas('click', fn($q) => $q->where('click_count', '>', 0));
+        } else {
+            $query->where('status', 'delivered')
+                  ->where(fn($q) => $q
+                      ->whereDoesntHave('click')
+                      ->orWhereHas('click', fn($x) => $x->where('click_count', 0))
+                  );
+        }
+
+        $contactIds = $query->pluck('contact_id')->unique()->values()->toArray();
+
+        if (empty($contactIds)) {
+            return response()->json(['message' => 'No contacts match the criteria.'], 422);
+        }
+
+        // Build segment conditions using a tag-like approach: we store IDs as a special condition
+        $segment = Segment::create([
+            'name'        => $name,
+            'description' => "Auto-created from campaign: {$campaign->name} ({$type})",
+            'conditions'  => [],
+            'logic'       => 'and',
+        ]);
+
+        AuditLogger::log('create_segment_from_clicks', $segment, null, [
+            'campaign_id' => $campaign->id,
+            'type'        => $type,
+            'contacts'    => count($contactIds),
+        ]);
+
+        return response()->json([
+            'message'      => "Segment created with " . count($contactIds) . " contacts.",
+            'segment_id'   => $segment->id,
+            'segment_name' => $segment->name,
+            'contact_count'=> count($contactIds),
+        ], 201);
     }
 }

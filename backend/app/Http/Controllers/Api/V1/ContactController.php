@@ -11,9 +11,11 @@ use App\Imports\ContactsImport;
 use App\Models\Contact;
 use App\Models\ContactNote;
 use App\Models\Message;
+use App\Models\SuppressionList;
 use App\Models\Tag;
 use App\Services\ActivityLogger;
 use App\Services\AuditLogger;
+use App\Services\CountryDetectorService;
 use App\Services\PhoneNormalizerService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -83,6 +85,10 @@ class ContactController extends Controller
             'email'    => $request->email,
             'notes'    => $request->notes,
             'opted_in' => $request->boolean('opted_in', true),
+            'country'  => CountryDetectorService::detect($request->phone ?? ''),
+            'language' => $request->language,
+            'status'   => $request->input('status', 'active'),
+            'source'   => 'manual',
         ]);
 
         if ($request->has('tags')) {
@@ -117,6 +123,11 @@ class ContactController extends Controller
             'email'    => $request->email,
             'notes'    => $request->notes,
             'opted_in' => $request->boolean('opted_in'),
+            'country'  => $request->filled('phone')
+                          ? CountryDetectorService::detect($request->phone)
+                          : $contact->country,
+            'language' => $request->input('language', $contact->language),
+            'status'   => $request->input('status', $contact->status),
         ]);
 
         $contact->tags()->sync($newTagIds);
@@ -270,12 +281,14 @@ class ContactController extends Controller
         $this->authorize('viewAny', Contact::class);
 
         $data = $request->validate([
-            'ids'     => 'required|array|min:1',
-            'ids.*'   => 'integer',
-            'action'  => 'required|in:add_note,add_tags,opted_out,opted_in',
-            'note'    => 'required_if:action,add_note|string|max:2000|nullable',
-            'tag_ids' => 'required_if:action,add_tags|array|nullable',
-            'tag_ids.*' => 'integer',
+            'ids'      => 'required|array|min:1',
+            'ids.*'    => 'integer',
+            'action'   => 'required|in:add_note,add_tags,opted_out,opted_in,set_status,set_language',
+            'note'     => 'required_if:action,add_note|string|max:2000|nullable',
+            'tag_ids'  => 'required_if:action,add_tags|array|nullable',
+            'tag_ids.*'=> 'integer',
+            'status'   => 'required_if:action,set_status|in:active,inactive,interested,follow_up,not_interested|nullable',
+            'language' => 'required_if:action,set_language|string|max:50|nullable',
         ]);
 
         $contacts = Contact::whereIn('id', $data['ids'])->get();
@@ -310,6 +323,16 @@ class ContactController extends Controller
 
                 'opted_in' => (function () use ($contact) {
                     $contact->update(['opted_in' => true]);
+                    ActivityLogger::contactUpdated($contact);
+                })(),
+
+                'set_status' => (function () use ($contact, $data) {
+                    $contact->update(['status' => $data['status']]);
+                    ActivityLogger::contactUpdated($contact);
+                })(),
+
+                'set_language' => (function () use ($contact, $data) {
+                    $contact->update(['language' => $data['language']]);
                     ActivityLogger::contactUpdated($contact);
                 })(),
             };
@@ -358,6 +381,119 @@ class ContactController extends Controller
         return Excel::download($export, $filename);
     }
 
+    public function filterCount(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Contact::class);
+
+        $query = Contact::query();
+
+        if ($tagId = $request->get('tag')) {
+            $query->whereHas('tags', fn($q) => $q->where('tags.id', $tagId));
+        }
+        if ($optIn = $request->get('opt_in')) {
+            $query->where('opted_in', $optIn === '1');
+        }
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $filtersRaw = $request->input('filters', []);
+        if (is_string($filtersRaw) && $filtersRaw !== '') {
+            $filtersRaw = json_decode($filtersRaw, true) ?? [];
+        }
+        if (is_array($filtersRaw) && !empty($filtersRaw)) {
+            $this->applyContactFilters($query, $filtersRaw, $request->input('filter_logic', 'and'));
+        }
+
+        return response()->json(['count' => $query->count()]);
+    }
+
+    public function bulkSuppress(Request $request): JsonResponse
+    {
+        $this->authorize('viewAny', Contact::class);
+
+        $data = $request->validate([
+            'ids'    => 'required|array|min:1',
+            'ids.*'  => 'integer',
+            'reason' => 'nullable|string|max:255',
+        ]);
+
+        $contacts = Contact::whereIn('id', $data['ids'])->get();
+        $count    = 0;
+
+        foreach ($contacts as $contact) {
+            SuppressionList::updateOrCreate(
+                ['phone' => $contact->phone],
+                [
+                    'name'           => $contact->name,
+                    'reason'         => $data['reason'] ?? 'Manual suppression',
+                    'contact_id'     => $contact->id,
+                    'added_by'       => auth()->id(),
+                    'failure_count'  => 1,
+                    'last_failed_at' => now(),
+                ]
+            );
+            $contact->update(['opted_in' => false]);
+            $count++;
+        }
+
+        AuditLogger::log('bulk_suppress_contacts', null, null, [
+            'count'  => $count,
+            'reason' => $data['reason'] ?? 'Manual suppression',
+        ]);
+
+        return response()->json(['message' => "{$count} contact(s) suppressed.", 'suppressed' => $count]);
+    }
+
+    public function analyticsCountry(): JsonResponse
+    {
+        $this->authorize('viewAny', Contact::class);
+
+        $rows = Contact::selectRaw('country, COUNT(*) as total, SUM(opted_in) as opted_in_count')
+            ->whereNotNull('country')
+            ->where('country', '!=', '')
+            ->groupBy('country')
+            ->orderByDesc('total')
+            ->get();
+
+        $grandTotal = $rows->sum('total');
+
+        $data = $rows->map(fn($r) => [
+            'country'       => $r->country,
+            'total'         => (int) $r->total,
+            'opted_in'      => (int) $r->opted_in_count,
+            'percentage'    => $grandTotal > 0 ? round(($r->total / $grandTotal) * 100, 1) : 0,
+        ]);
+
+        return response()->json(['data' => $data, 'total' => $grandTotal]);
+    }
+
+    public function analyticsLanguage(): JsonResponse
+    {
+        $this->authorize('viewAny', Contact::class);
+
+        $rows = Contact::selectRaw('language, COUNT(*) as total')
+            ->whereNotNull('language')
+            ->where('language', '!=', '')
+            ->groupBy('language')
+            ->orderByDesc('total')
+            ->get();
+
+        $grandTotal = $rows->sum('total');
+
+        $data = $rows->map(fn($r) => [
+            'language'   => $r->language,
+            'total'      => (int) $r->total,
+            'percentage' => $grandTotal > 0 ? round(($r->total / $grandTotal) * 100, 1) : 0,
+        ]);
+
+        return response()->json(['data' => $data, 'total' => $grandTotal]);
+    }
+
     // ── Advanced contact filter (self-contained, no SegmentService dependency) ──
 
     private function applyContactFilters(Builder $query, array $conditions, string $logic): void
@@ -380,9 +516,26 @@ class ContactController extends Controller
                 'phone' => $this->applyStrFilter($q, 'phone', $operator, $value),
 
                 'country', 'phone_country' => ($value !== null && $value !== '') ? match ($operator) {
-                    'is_not', 'not_starts_with' => $q->where('phone', 'not like', $value . '%'),
-                    default                     => $q->where('phone', 'like', $value . '%'),
+                    'is_not', 'not_contains' => $q->where('country', '!=', $value),
+                    'contains'               => $q->where('country', 'like', "%{$value}%"),
+                    default                  => $q->where('country', $value),
                 } : null,
+
+                'language' => ($value !== null && $value !== '') ? match ($operator) {
+                    'is_not'       => $q->where('language', '!=', $value),
+                    'contains'     => $q->where('language', 'like', "%{$value}%"),
+                    'has'          => $q->whereNotNull('language')->where('language', '!=', ''),
+                    'not_has'      => $q->where(fn($x) => $x->whereNull('language')->orWhere('language', '')),
+                    default        => $q->where('language', $value),
+                } : null,
+
+                'status' => ($value !== null && $value !== '')
+                    ? $q->where('status', $value)
+                    : null,
+
+                'source' => ($value !== null && $value !== '')
+                    ? $q->where('source', $value)
+                    : null,
 
                 'email' => match ($operator) {
                     'has'          => $q->whereNotNull('email')->where('email', '!=', ''),

@@ -1,9 +1,10 @@
-import React, { useEffect, useState } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import React, { useEffect, useState, useCallback } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
   Send, RotateCcw, Copy, Trash2, Download,
-  CheckCircle2, XCircle, MousePointerClick, Users, Clock
+  CheckCircle2, XCircle, MousePointerClick, Users, Clock,
+  Target, MessageSquare, ChevronRight
 } from 'lucide-react'
 import api from '../services/api'
 import { useToast } from '../context/ToastContext'
@@ -13,12 +14,13 @@ import { Button } from '../components/ui/Button'
 import { StatusBadge } from '../components/ui/Badge'
 import { Pagination } from '../components/ui/Pagination'
 import { SkeletonCard } from '../components/ui/Skeleton'
+import { Spinner } from '../components/ui/Spinner'
 import { staggerContainer, staggerItem } from '../lib/animations'
+import { cn } from '../lib/cn'
 
 // Stat card with animated progress bar
 function StatCard({ icon: Icon, label, value, rate, total, barColor, iconColor }) {
   const pct = total > 0 && value != null ? Math.min(100, Math.round((value / total) * 100)) : 0
-
   return (
     <div className="rounded-xl bg-[var(--surface)] border border-[var(--border)] p-4 shadow-[var(--shadow-sm)] overflow-hidden">
       <div className="flex items-center gap-2 mb-3">
@@ -45,7 +47,6 @@ function StatCard({ icon: Icon, label, value, rate, total, barColor, iconColor }
   )
 }
 
-// Live pulse dot for "sending" campaigns
 function SendingIndicator() {
   return (
     <span className="relative flex h-2.5 w-2.5">
@@ -55,9 +56,155 @@ function SendingIndicator() {
   )
 }
 
+// Create segment from clicked/non-clicked modal
+function CreateSegmentModal({ campaignId, type, count, onClose, onCreated }) {
+  const { toast } = useToast()
+  const [name, setName] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const handleSubmit = async e => {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      const r = await api.post(`/campaigns/${campaignId}/create-segment-from-clicks`, { type, name })
+      toast.success(`Segment "${r.data.segment?.name}" created with ${r.data.segment?.contact_count ?? count} contacts`)
+      onCreated()
+      onClose()
+    } catch (err) {
+      toast.error(err?.response?.data?.message ?? 'Failed to create segment')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const label = type === 'clicked' ? 'Clicked' : 'Non-Clicked'
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="w-full max-w-md bg-[var(--surface)] rounded-2xl shadow-[var(--shadow-xl)] border border-[var(--border)]">
+        <div className="px-6 py-4 border-b border-[var(--border)]">
+          <h2 className="text-base font-semibold text-[var(--text-primary)]">Create Segment from {label} Contacts</h2>
+          <p className="text-xs text-[var(--text-tertiary)] mt-0.5">{count?.toLocaleString()} contacts will be added to this segment</p>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-[var(--text-secondary)] mb-1.5">Segment Name <span className="text-red-500">*</span></label>
+            <input
+              type="text"
+              className="w-full px-3 py-2 rounded-lg border border-[var(--border)] bg-[var(--surface)] text-sm text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-brand-500"
+              placeholder={`e.g. Campaign ${campaignId} ${label}`}
+              value={name}
+              onChange={e => setName(e.target.value)}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-2">
+            <Button variant="ghost" type="button" onClick={onClose}>Cancel</Button>
+            <Button type="submit" loading={saving} leftIcon={<Target size={14} />}>Create Segment</Button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+// Contacts sub-table (clicked or non-clicked)
+function ContactsSubTable({ campaignId, type, stats }) {
+  const { toast }           = useToast()
+  const [data, setData]     = useState(null)
+  const [page, setPage]     = useState(1)
+  const [loading, setLoading] = useState(true)
+  const [showModal, setShowModal] = useState(false)
+
+  const count = type === 'clicked' ? stats?.clicked : (stats?.delivered - stats?.clicked)
+
+  const load = useCallback(() => {
+    setLoading(true)
+    const endpoint = type === 'clicked' ? 'clicked-contacts' : 'non-clicked-contacts'
+    api.get(`/campaigns/${campaignId}/${endpoint}`, { params: { page } })
+      .then(r => setData(r.data))
+      .finally(() => setLoading(false))
+  }, [campaignId, type, page])
+
+  useEffect(() => { load() }, [load])
+
+  return (
+    <div className="space-y-3">
+      {showModal && (
+        <CreateSegmentModal
+          campaignId={campaignId}
+          type={type}
+          count={count}
+          onClose={() => setShowModal(false)}
+          onCreated={() => {}}
+        />
+      )}
+
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-[var(--text-secondary)]">
+          {count != null ? <><span className="font-semibold text-[var(--text-primary)]">{Number(count).toLocaleString()}</span> contacts</> : '—'}
+        </p>
+        {count > 0 && (
+          <Button
+            size="sm"
+            variant="secondary"
+            leftIcon={<Target size={13} />}
+            onClick={() => setShowModal(true)}
+          >
+            Create Segment
+          </Button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-10">
+          <Spinner size="lg" />
+        </div>
+      ) : data?.data?.length === 0 ? (
+        <div className="py-10 text-center text-sm text-[var(--text-tertiary)]">No contacts found</div>
+      ) : (
+        <div className="rounded-xl border border-[var(--border)] overflow-hidden">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
+                {['Contact', 'Phone', 'Country', 'Status', type === 'clicked' ? 'Clicks' : 'Delivered At'].map(h => (
+                  <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wide">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[var(--border)]">
+              {data.data.map(m => (
+                <tr key={m.id} className="hover:bg-[var(--surface-2)] transition-colors">
+                  <td className="px-4 py-3">
+                    {m.contact?.id ? (
+                      <Link to={`/contacts/${m.contact.id}`} className="text-sm font-medium text-brand-600 hover:underline">
+                        {m.contact.name}
+                      </Link>
+                    ) : (
+                      <span className="text-sm text-[var(--text-tertiary)] italic">Deleted</span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{m.contact?.phone ?? '—'}</td>
+                  <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{m.contact?.country ?? '—'}</td>
+                  <td className="px-4 py-3"><StatusBadge status={m.status} /></td>
+                  <td className="px-4 py-3 text-sm tabular text-[var(--text-secondary)]">
+                    {type === 'clicked' ? (m.click?.click_count ?? 0) : (m.updated_at ? new Date(m.updated_at).toLocaleString() : '—')}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <Pagination meta={data.meta} onPageChange={setPage} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function CampaignDetailPage() {
-  const { id }   = useParams()
-  const navigate = useNavigate()
+  const { id }    = useParams()
+  const navigate  = useNavigate()
   const { toast } = useToast()
 
   const [data, setData]         = useState(null)
@@ -65,6 +212,8 @@ export default function CampaignDetailPage() {
   const [msgPage, setMsgPage]   = useState(1)
   const [loading, setLoading]   = useState(true)
   const [actionLoading, setAL]  = useState('')
+  const [activeTab, setTab]     = useState('messages')
+  const [msgFilter, setMsgFilter] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -76,12 +225,14 @@ export default function CampaignDetailPage() {
   }
 
   useEffect(() => { load() }, [id])
+
   useEffect(() => {
     if (!loading) {
-      api.get(`/campaigns/${id}/messages`, { params: { page: msgPage } })
-        .then(r => setMessages(r.data))
+      const params = { page: msgPage }
+      if (msgFilter) params.status = msgFilter
+      api.get(`/campaigns/${id}/messages`, { params }).then(r => setMessages(r.data))
     }
-  }, [msgPage])
+  }, [msgPage, msgFilter])
 
   // Auto-refresh while sending
   useEffect(() => {
@@ -130,8 +281,15 @@ export default function CampaignDetailPage() {
   if (!data) return null
 
   const { campaign, stats } = data
-  const canSend  = ['draft', 'scheduled'].includes(campaign.status)
+  const canSend   = ['draft', 'scheduled'].includes(campaign.status)
   const isSending = campaign.status === 'sending'
+  const hasSent   = ['sent', 'sending', 'completed'].includes(campaign.status)
+
+  const tabs = [
+    { id: 'messages',    label: 'All Messages', count: stats.total },
+    { id: 'clicked',     label: 'Clicked',      count: stats.clicked },
+    { id: 'non_clicked', label: 'Not Clicked',  count: stats.delivered != null && stats.clicked != null ? stats.delivered - stats.clicked : null },
+  ]
 
   return (
     <div className="space-y-6">
@@ -140,7 +298,7 @@ export default function CampaignDetailPage() {
         subtitle={`Created by ${campaign.creator?.name ?? 'Unknown'} · ${new Date(campaign.created_at).toLocaleDateString()}`}
         breadcrumbs={[{ label: 'Campaigns', href: '/campaigns' }, { label: campaign.name }]}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             {canSend && (
               <Button
                 leftIcon={<Send size={14} />}
@@ -187,9 +345,7 @@ export default function CampaignDetailPage() {
           </span>
         )}
         {isSending && (
-          <span className="text-xs text-[var(--text-tertiary)]">
-            Auto-refreshing every 8 s
-          </span>
+          <span className="text-xs text-[var(--text-tertiary)]">Auto-refreshing every 8 s</span>
         )}
       </div>
 
@@ -201,56 +357,23 @@ export default function CampaignDetailPage() {
         </p>
       </Card>
 
-      {/* Stats with progress bars */}
+      {/* Stats */}
       <motion.div
         className="grid grid-cols-2 gap-4 sm:grid-cols-4"
         variants={staggerContainer}
         initial="initial"
         animate="animate"
       >
-        <motion.div variants={staggerItem}>
-          <StatCard
-            icon={Users}
-            label="Total"
-            value={stats.total}
-            total={stats.total}
-            barColor="bg-gray-300 dark:bg-gray-600"
-            iconColor="bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400"
-          />
-        </motion.div>
-        <motion.div variants={staggerItem}>
-          <StatCard
-            icon={CheckCircle2}
-            label="Delivered"
-            value={stats.delivered}
-            rate={stats.delivery_rate}
-            total={stats.total}
-            barColor="bg-emerald-500"
-            iconColor="bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400"
-          />
-        </motion.div>
-        <motion.div variants={staggerItem}>
-          <StatCard
-            icon={XCircle}
-            label="Failed"
-            value={stats.failed}
-            rate={stats.failure_rate}
-            total={stats.total}
-            barColor="bg-red-500"
-            iconColor="bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400"
-          />
-        </motion.div>
-        <motion.div variants={staggerItem}>
-          <StatCard
-            icon={MousePointerClick}
-            label="Clicked"
-            value={stats.clicked}
-            rate={stats.click_rate}
-            total={stats.total}
-            barColor="bg-brand-500"
-            iconColor="bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400"
-          />
-        </motion.div>
+        {[
+          { icon: Users, label: 'Total', value: stats.total, barColor: 'bg-gray-300 dark:bg-gray-600', iconColor: 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400' },
+          { icon: CheckCircle2, label: 'Delivered', value: stats.delivered, rate: stats.delivery_rate, barColor: 'bg-emerald-500', iconColor: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400' },
+          { icon: XCircle, label: 'Failed', value: stats.failed, rate: stats.failure_rate, barColor: 'bg-red-500', iconColor: 'bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400' },
+          { icon: MousePointerClick, label: 'Clicked', value: stats.clicked, rate: stats.click_rate, barColor: 'bg-brand-500', iconColor: 'bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400' },
+        ].map((s, i) => (
+          <motion.div key={s.label} variants={staggerItem}>
+            <StatCard {...s} total={stats.total} />
+          </motion.div>
+        ))}
       </motion.div>
 
       {/* Resend failed */}
@@ -265,43 +388,123 @@ export default function CampaignDetailPage() {
         </Button>
       )}
 
-      {/* Messages table */}
-      <Card padding={false}>
-        <div className="px-5 py-4 border-b border-[var(--border)]">
-          <h3 className="text-sm font-semibold text-[var(--text-primary)]">Messages</h3>
-        </div>
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
-              {['Contact', 'Phone', 'Status', 'Cost', 'Clicks', 'Updated'].map(h => (
-                <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wide">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-[var(--border)]">
-            {messages?.data?.map(m => (
-              <tr key={m.id} className="hover:bg-[var(--surface-2)] transition-colors">
-                <td className="px-4 py-3 text-sm text-[var(--text-primary)]">
-                  {m.contact?.name ?? <span className="text-[var(--text-tertiary)] italic">Deleted</span>}
-                </td>
-                <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{m.contact?.phone ?? '—'}</td>
-                <td className="px-4 py-3">
-                  <StatusBadge status={m.status} />
-                </td>
-                <td className="px-4 py-3 text-sm tabular text-[var(--text-secondary)]">{m.cost ? `$${m.cost}` : '—'}</td>
-                <td className="px-4 py-3 text-sm tabular text-[var(--text-secondary)]">{m.click?.click_count ?? 0}</td>
-                <td className="px-4 py-3 text-xs text-[var(--text-tertiary)]">{new Date(m.updated_at).toLocaleString()}</td>
-              </tr>
-            ))}
-            {messages?.data?.length === 0 && (
-              <tr>
-                <td colSpan={6} className="py-10 text-center text-sm text-[var(--text-tertiary)]">No messages found</td>
-              </tr>
+      {/* Tab navigation */}
+      <div className="flex items-center gap-1 border-b border-[var(--border)]">
+        {tabs.map(t => (
+          <button
+            key={t.id}
+            onClick={() => { setTab(t.id); setMsgPage(1) }}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px',
+              activeTab === t.id
+                ? 'border-brand-500 text-brand-600 dark:text-brand-400'
+                : 'border-transparent text-[var(--text-secondary)] hover:text-[var(--text-primary)]'
             )}
-          </tbody>
-        </table>
-        <Pagination meta={messages?.meta} onPageChange={setMsgPage} />
-      </Card>
+          >
+            {t.label}
+            {t.count != null && (
+              <span className={cn(
+                'text-[10px] font-semibold px-1.5 py-0.5 rounded-full',
+                activeTab === t.id
+                  ? 'bg-brand-100 dark:bg-brand-900 text-brand-700 dark:text-brand-300'
+                  : 'bg-[var(--surface-2)] text-[var(--text-tertiary)]'
+              )}>
+                {Number(t.count).toLocaleString()}
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+
+      {/* All messages tab */}
+      {activeTab === 'messages' && (
+        <Card padding={false}>
+          <div className="flex items-center gap-3 px-5 py-4 border-b border-[var(--border)]">
+            <h3 className="text-sm font-semibold text-[var(--text-primary)] flex-1">Messages</h3>
+            <select
+              value={msgFilter}
+              onChange={e => { setMsgFilter(e.target.value); setMsgPage(1) }}
+              className="text-xs rounded-lg border border-[var(--border)] bg-[var(--surface)] text-[var(--text-secondary)] px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-brand-500"
+            >
+              <option value="">All statuses</option>
+              <option value="sent">Sent</option>
+              <option value="delivered">Delivered</option>
+              <option value="failed">Failed</option>
+              <option value="undelivered">Undelivered</option>
+            </select>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-[var(--border)] bg-[var(--surface-2)]">
+                  {['Contact', 'Phone', 'Country', 'Status', 'Cost', 'Clicks', 'Updated'].map(h => (
+                    <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-[var(--text-tertiary)] uppercase tracking-wide">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[var(--border)]">
+                {messages?.data?.map(m => (
+                  <tr key={m.id} className="hover:bg-[var(--surface-2)] transition-colors">
+                    <td className="px-4 py-3 text-sm">
+                      {m.contact?.id ? (
+                        <Link to={`/contacts/${m.contact.id}`} className="font-medium text-brand-600 hover:underline">
+                          {m.contact.name}
+                        </Link>
+                      ) : (
+                        <span className="text-[var(--text-tertiary)] italic">Deleted</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{m.contact?.phone ?? '—'}</td>
+                    <td className="px-4 py-3 text-sm text-[var(--text-secondary)]">{m.contact?.country ?? '—'}</td>
+                    <td className="px-4 py-3"><StatusBadge status={m.status} /></td>
+                    <td className="px-4 py-3 text-sm tabular text-[var(--text-secondary)]">{m.cost ? `$${m.cost}` : '—'}</td>
+                    <td className="px-4 py-3 text-sm tabular text-[var(--text-secondary)]">{m.click?.click_count ?? 0}</td>
+                    <td className="px-4 py-3 text-xs text-[var(--text-tertiary)]">{new Date(m.updated_at).toLocaleString()}</td>
+                  </tr>
+                ))}
+                {messages?.data?.length === 0 && (
+                  <tr>
+                    <td colSpan={7} className="py-10 text-center text-sm text-[var(--text-tertiary)]">No messages found</td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <Pagination meta={messages?.meta} onPageChange={setMsgPage} />
+        </Card>
+      )}
+
+      {/* Clicked contacts tab */}
+      {activeTab === 'clicked' && hasSent && (
+        <Card>
+          <CardHeader
+            title="Clicked Contacts"
+            subtitle="Contacts who clicked the link in this campaign"
+          />
+          <ContactsSubTable campaignId={id} type="clicked" stats={stats} />
+        </Card>
+      )}
+
+      {/* Non-clicked contacts tab */}
+      {activeTab === 'non_clicked' && hasSent && (
+        <Card>
+          <CardHeader
+            title="Non-Clicked Contacts"
+            subtitle="Delivered messages where the link was not clicked"
+          />
+          <ContactsSubTable campaignId={id} type="non_clicked" stats={stats} />
+        </Card>
+      )}
+
+      {(activeTab === 'clicked' || activeTab === 'non_clicked') && !hasSent && (
+        <Card>
+          <EmptyState
+            icon={MousePointerClick}
+            title="Campaign not yet sent"
+            description="Click tracking data will be available after the campaign is sent."
+          />
+        </Card>
+      )}
     </div>
   )
 }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Campaign;
+use App\Models\Contact;
 use App\Models\Message;
 use App\Services\CountryDetectorService;
 use Illuminate\Http\JsonResponse;
@@ -48,73 +49,193 @@ class ReportController extends Controller
     {
         abort_unless(auth()->user()->isAdmin(), 403);
 
-        $stats = Cache::remember('report_countries_stats', 3600, function () {
-            $contacts = \App\Models\Contact::select('phone')->get();
-            $byCountry = [];
-
-            foreach ($contacts as $contact) {
-                $country = CountryDetectorService::detect($contact->phone);
-                if (!isset($byCountry[$country])) {
-                    $byCountry[$country] = [
-                        'country'       => $country,
-                        'contacts'      => 0,
-                        'messages_sent' => 0,
-                        'delivered'     => 0,
-                        'failed'        => 0,
-                    ];
-                }
-                $byCountry[$country]['contacts']++;
-            }
-
-            $messageCounts = Message::join('contacts', 'messages.contact_id', '=', 'contacts.id')
-                ->selectRaw('contacts.phone, messages.status')
-                ->whereNotNull('contacts.phone')
+        // Use stored country column — O(1) per row, no in-memory detection
+        $stats = Cache::remember('report_countries_stats_v2', 1800, function () {
+            $byCountry = Contact::selectRaw('
+                    country,
+                    COUNT(*) as contacts,
+                    SUM(opted_in) as opted_in_count
+                ')
+                ->whereNotNull('country')
+                ->where('country', '!=', '')
+                ->groupBy('country')
+                ->orderByDesc('contacts')
                 ->get();
 
-            foreach ($messageCounts as $msg) {
-                $country = CountryDetectorService::detect($msg->phone);
-                if (!isset($byCountry[$country])) {
-                    $byCountry[$country] = ['country' => $country, 'contacts' => 0, 'messages_sent' => 0, 'delivered' => 0, 'failed' => 0];
-                }
-                if (in_array($msg->status, ['sent', 'delivered', 'failed', 'undelivered', 'queued'])) {
-                    $byCountry[$country]['messages_sent']++;
-                }
-                if ($msg->status === 'delivered') {
-                    $byCountry[$country]['delivered']++;
-                }
-                if (in_array($msg->status, ['failed', 'undelivered'])) {
-                    $byCountry[$country]['failed']++;
-                }
-            }
+            // Delivery stats per country via join
+            $deliveryStats = DB::table('messages')
+                ->join('contacts', 'messages.contact_id', '=', 'contacts.id')
+                ->selectRaw('
+                    contacts.country,
+                    COUNT(*) as messages_sent,
+                    SUM(CASE WHEN messages.status = "delivered" THEN 1 ELSE 0 END) as delivered,
+                    SUM(CASE WHEN messages.status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed
+                ')
+                ->whereNotNull('contacts.country')
+                ->groupBy('contacts.country')
+                ->get()
+                ->keyBy('country');
 
-            return collect(array_values($byCountry))
-                ->map(function ($row) {
-                    $row['delivery_rate'] = $row['messages_sent'] > 0
-                        ? round(($row['delivered'] / $row['messages_sent']) * 100, 1)
-                        : 0;
-                    return $row;
-                })
-                ->sortByDesc('contacts')
-                ->values();
+            $grandTotal = $byCountry->sum('contacts');
+
+            return $byCountry->map(function ($row) use ($deliveryStats, $grandTotal) {
+                $ds = $deliveryStats->get($row->country);
+                $msgSent = (int) ($ds?->messages_sent ?? 0);
+                return [
+                    'country'       => $row->country,
+                    'contacts'      => (int) $row->contacts,
+                    'opted_in'      => (int) $row->opted_in_count,
+                    'percentage'    => $grandTotal > 0 ? round(($row->contacts / $grandTotal) * 100, 1) : 0,
+                    'messages_sent' => $msgSent,
+                    'delivered'     => (int) ($ds?->delivered ?? 0),
+                    'failed'        => (int) ($ds?->failed ?? 0),
+                    'delivery_rate' => $msgSent > 0 ? round(($ds->delivered / $msgSent) * 100, 1) : 0,
+                ];
+            })->values();
         });
 
         return response()->json([
             'data'          => $stats,
             'top_countries' => $stats->take(10),
+            'total_contacts' => $stats->sum('contacts'),
         ]);
+    }
+
+    public function languages(): JsonResponse
+    {
+        abort_unless(auth()->user()->isAdmin(), 403);
+
+        $stats = Cache::remember('report_languages_stats', 1800, function () {
+            $rows = Contact::selectRaw('language, COUNT(*) as total, SUM(opted_in) as opted_in_count')
+                ->whereNotNull('language')
+                ->where('language', '!=', '')
+                ->groupBy('language')
+                ->orderByDesc('total')
+                ->get();
+
+            $grandTotal = $rows->sum('total');
+
+            return $rows->map(fn($r) => [
+                'language'   => $r->language,
+                'total'      => (int) $r->total,
+                'opted_in'   => (int) $r->opted_in_count,
+                'percentage' => $grandTotal > 0 ? round(($r->total / $grandTotal) * 100, 1) : 0,
+            ])->values();
+        });
+
+        return response()->json(['data' => $stats, 'total' => $stats->sum('total')]);
     }
 
     public function delivery(Request $request): JsonResponse
     {
+        $days   = min($request->integer('days', 30), 365);
+        $period = $request->get('period', 'daily');
 
-        $days = $request->integer('days', 30);
-
-        $daily = Message::selectRaw('DATE(created_at) as date, COUNT(*) as total, SUM(CASE WHEN status="delivered" THEN 1 ELSE 0 END) as delivered, SUM(CASE WHEN status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed')
-            ->where('created_at', '>=', now()->subDays($days))
-            ->groupBy('date')
-            ->orderBy('date')
-            ->get();
+        if ($period === 'weekly') {
+            $daily = Message::selectRaw('
+                    YEARWEEK(created_at, 1) as week_key,
+                    MIN(DATE(created_at)) as date,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status="delivered" THEN 1 ELSE 0 END) as delivered,
+                    SUM(CASE WHEN status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed,
+                    SUM(COALESCE(cost, 0)) as cost
+                ')
+                ->where('created_at', '>=', now()->subWeeks(12))
+                ->groupBy('week_key')
+                ->orderBy('week_key')
+                ->get();
+        } elseif ($period === 'monthly') {
+            $daily = Message::selectRaw('
+                    DATE_FORMAT(created_at, "%Y-%m") as date,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status="delivered" THEN 1 ELSE 0 END) as delivered,
+                    SUM(CASE WHEN status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed,
+                    SUM(COALESCE(cost, 0)) as cost
+                ')
+                ->where('created_at', '>=', now()->subMonths(12))
+                ->groupBy('date')
+                ->orderBy('date')
+                ->get();
+        } else {
+            $daily = Message::selectRaw('
+                    DATE(created_at) as date,
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status="delivered" THEN 1 ELSE 0 END) as delivered,
+                    SUM(CASE WHEN status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed,
+                    SUM(COALESCE(cost, 0)) as cost
+                ')
+                ->where('created_at', '>=', now()->subDays($days))
+                ->groupBy('date')
+                ->orderBy('date')
+                ->get();
+        }
 
         return response()->json(['data' => $daily]);
+    }
+
+    public function summary(): JsonResponse
+    {
+        abort_unless(auth()->user()->isAdmin(), 403);
+
+        $sym = config('sms.currency_symbol', '$');
+
+        $today    = now()->toDateString();
+        $weekStart = now()->startOfWeek()->toDateString();
+        $monthStart = now()->startOfMonth()->toDateString();
+
+        $dailyStats = $this->periodStats($today, $today);
+        $weeklyStats = $this->periodStats($weekStart, $today);
+        $monthlyStats = $this->periodStats($monthStart, $today);
+
+        // Contacts trend
+        $contactsToday = Contact::whereDate('created_at', today())->count();
+        $contactsWeek  = Contact::where('created_at', '>=', now()->startOfWeek())->count();
+        $contactsMonth = Contact::where('created_at', '>=', now()->startOfMonth())->count();
+
+        // Campaign trend
+        $campaignsToday = Campaign::whereDate('created_at', today())->count();
+        $campaignsWeek  = Campaign::where('created_at', '>=', now()->startOfWeek())->count();
+        $campaignsMonth = Campaign::where('created_at', '>=', now()->startOfMonth())->count();
+
+        return response()->json([
+            'currency_symbol' => $sym,
+            'daily'   => array_merge($dailyStats,   ['contacts_added' => $contactsToday,  'campaigns_sent' => $campaignsToday]),
+            'weekly'  => array_merge($weeklyStats,  ['contacts_added' => $contactsWeek,   'campaigns_sent' => $campaignsWeek]),
+            'monthly' => array_merge($monthlyStats, ['contacts_added' => $contactsMonth,  'campaigns_sent' => $campaignsMonth]),
+        ]);
+    }
+
+    private function periodStats(string $from, string $to): array
+    {
+        $row = Message::selectRaw('
+                COUNT(*) as total,
+                SUM(CASE WHEN status="delivered" THEN 1 ELSE 0 END) as delivered,
+                SUM(CASE WHEN status IN ("failed","undelivered") THEN 1 ELSE 0 END) as failed,
+                SUM(COALESCE(cost, 0)) as cost
+            ')
+            ->whereDate('created_at', '>=', $from)
+            ->whereDate('created_at', '<=', $to)
+            ->first();
+
+        $total     = (int) ($row->total ?? 0);
+        $delivered = (int) ($row->delivered ?? 0);
+        $failed    = (int) ($row->failed ?? 0);
+        $cost      = (float) ($row->cost ?? 0);
+
+        // Click count
+        $clicks = \App\Models\Click::whereHas('message', function ($q) use ($from, $to) {
+            $q->whereDate('created_at', '>=', $from)
+              ->whereDate('created_at', '<=', $to);
+        })->where('click_count', '>', 0)->count();
+
+        return [
+            'sent'          => $total,
+            'delivered'     => $delivered,
+            'failed'        => $failed,
+            'clicks'        => $clicks,
+            'delivery_rate' => $total > 0 ? round(($delivered / $total) * 100, 1) : 0,
+            'click_rate'    => $delivered > 0 ? round(($clicks / $delivered) * 100, 1) : 0,
+            'cost'          => $cost,
+        ];
     }
 }

@@ -8,8 +8,9 @@ use App\Models\Click;
 use App\Models\Contact;
 use App\Models\GlobalBlacklist;
 use App\Models\Message;
-use App\Services\CountryDetectorService;
+use App\Models\SuppressionList;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 
 class DashboardController extends Controller
 {
@@ -20,14 +21,20 @@ class DashboardController extends Controller
         $totalDelivered = Message::where('status', 'delivered')->count();
         $totalClicked   = Click::where('click_count', '>', 0)->count();
 
+        $totalContacts = Contact::count();
+        $optedIn       = Contact::where('opted_in', true)->count();
+
         $stats = [
-            'total_contacts'      => Contact::count(),
-            'opted_in'            => Contact::where('opted_in', true)->count(),
+            'total_contacts'      => $totalContacts,
+            'opted_in'            => $optedIn,
+            'opted_out'           => $totalContacts - $optedIn,
             'blacklisted'         => GlobalBlacklist::count(),
+            'suppressed'          => SuppressionList::count(),
             'total_campaigns'     => Campaign::count(),
             'active_campaigns'    => Campaign::whereIn('status', ['sending', 'scheduled'])->count(),
             'total_messages_sent' => $totalSent,
             'total_delivered'     => $totalDelivered,
+            'total_clicked'       => $totalClicked,
             'delivery_rate'       => $totalSent > 0 ? round(($totalDelivered / $totalSent) * 100, 1) : 0,
             'click_rate'          => $totalDelivered > 0 ? round(($totalClicked / $totalDelivered) * 100, 1) : 0,
             'cost_today'          => (float) Message::whereDate('created_at', today())->sum('cost'),
@@ -45,33 +52,21 @@ class DashboardController extends Controller
             ->take(8)
             ->get(['id', 'campaign_id', 'contact_id', 'status', 'updated_at']);
 
-        $topCountries = $this->getTopCountries(5);
+        $topCountries = Contact::selectRaw('country, COUNT(*) as count')
+            ->whereNotNull('country')
+            ->where('country', '!=', '')
+            ->groupBy('country')
+            ->orderByDesc('count')
+            ->limit(5)
+            ->get()
+            ->map(fn($r) => ['country' => $r->country, 'count' => (int) $r->count])
+            ->toArray();
 
         return response()->json([
-            'stats'           => $stats,
+            'stats'            => $stats,
             'recent_campaigns' => $recentCampaigns,
-            'recent_activity' => $recentActivity,
-            'top_countries'   => $topCountries,
+            'recent_activity'  => $recentActivity,
+            'top_countries'    => $topCountries,
         ]);
-    }
-
-    private function getTopCountries(int $limit): array
-    {
-        $contacts = Contact::select('phone')->limit(500)->get();
-        $counts   = [];
-
-        foreach ($contacts as $contact) {
-            $country          = CountryDetectorService::detect($contact->phone);
-            $counts[$country] = ($counts[$country] ?? 0) + 1;
-        }
-
-        arsort($counts);
-        $top = array_slice($counts, 0, $limit, true);
-
-        return array_map(
-            fn($country, $count) => ['country' => $country, 'count' => $count],
-            array_keys($top),
-            $top
-        );
     }
 }

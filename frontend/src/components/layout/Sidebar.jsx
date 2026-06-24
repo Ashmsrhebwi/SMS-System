@@ -4,26 +4,28 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   LayoutDashboard, Send, Users, FileText, Tag, Target,
   BarChart3, UserCog, ChevronLeft, ChevronRight,
-  Zap, Settings, ClipboardList, Ban,
+  Zap, Settings, ClipboardList, Ban, ShieldOff, Layers,
 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { useAuth } from '../../context/AuthContext'
 import { Avatar } from '../ui/Avatar'
 
 const NAV = [
-  { to: '/',          label: 'Dashboard',  icon: LayoutDashboard, end: true },
-  { to: '/campaigns', label: 'Campaigns',  icon: Send },
-  { to: '/contacts',  label: 'Contacts',   icon: Users },
-  { to: '/templates', label: 'Templates',  icon: FileText },
-  { to: '/tags',      label: 'Tags',       icon: Tag },
-  { to: '/segments',  label: 'Segments',   icon: Target },
-  { to: '/reports',   label: 'Reports',    icon: BarChart3 },
+  { to: '/',               label: 'Dashboard',       icon: LayoutDashboard, end: true },
+  { to: '/campaigns',      label: 'Campaigns',       icon: Send },
+  { to: '/contacts',       label: 'Contacts',        icon: Users },
+  { to: '/templates',      label: 'Templates',       icon: FileText },
+  { to: '/tags',           label: 'Tags',            icon: Tag },
+  { to: '/segments',       label: 'Segments',        icon: Target },
+  { to: '/smart-segments', label: 'Smart Segments',  icon: Layers },
+  { to: '/reports',        label: 'Reports',         icon: BarChart3 },
 ]
 
 const ADMIN_NAV = [
-  { to: '/users',      label: 'Users',      icon: UserCog },
-  { to: '/audit-logs', label: 'Audit Logs', icon: ClipboardList },
-  { to: '/blacklist',  label: 'Blacklist',  icon: Ban },
+  { to: '/users',       label: 'Users',       icon: UserCog },
+  { to: '/audit-logs',  label: 'Audit Logs',  icon: ClipboardList },
+  { to: '/blacklist',   label: 'Blacklist',   icon: Ban },
+  { to: '/suppression', label: 'Suppression', icon: ShieldOff },
 ]
 
 const BOTTOM_NAV = [

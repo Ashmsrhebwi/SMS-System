@@ -11,10 +11,13 @@ class Contact extends Model
 {
     use SoftDeletes;
 
-    protected $fillable = ['name', 'phone', 'email', 'opted_in', 'last_visit', 'notes'];
+    protected $fillable = [
+        'name', 'phone', 'email', 'opted_in', 'last_visit', 'notes',
+        'country', 'language', 'status', 'source',
+    ];
 
     protected $casts = [
-        'opted_in' => 'boolean',
+        'opted_in'   => 'boolean',
         'last_visit' => 'date',
     ];
 

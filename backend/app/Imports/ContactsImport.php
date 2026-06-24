@@ -6,6 +6,7 @@ use App\Models\Contact;
 use App\Models\GlobalBlacklist;
 use App\Models\OptOut;
 use App\Services\ActivityLogger;
+use App\Services\CountryDetectorService;
 use App\Services\PhoneNormalizerService;
 use Illuminate\Support\Collection;
 use Maatwebsite\Excel\Concerns\ToCollection;
@@ -38,6 +39,9 @@ class ContactsImport implements ToCollection, WithHeadingRow
             }
             $email    = trim($row['email'] ?? '');
             $notes    = trim($row['notes'] ?? '');
+            $language = trim($row['language'] ?? '');
+            $status   = trim($row['status'] ?? 'active');
+            $source   = trim($row['source'] ?? 'import');
 
             // Validation: missing required fields
             if (empty($name) || empty($rawPhone)) {
@@ -133,6 +137,9 @@ class ContactsImport implements ToCollection, WithHeadingRow
                 ? in_array(strtolower((string) $rawOptIn), ['1', 'true', 'yes'], true)
                 : true;
 
+            $validStatuses = ['active', 'inactive', 'interested', 'follow_up', 'not_interested'];
+            $contactStatus = in_array($status, $validStatuses) ? $status : 'active';
+
             try {
                 $contact = Contact::create([
                     'name'     => $name,
@@ -140,6 +147,10 @@ class ContactsImport implements ToCollection, WithHeadingRow
                     'email'    => $email ?: null,
                     'opted_in' => $optedIn,
                     'notes'    => $notes ?: null,
+                    'country'  => CountryDetectorService::detect($normalizedPhone),
+                    'language' => $language ?: null,
+                    'status'   => $contactStatus,
+                    'source'   => 'import',
                 ]);
                 $this->processedPhones[$normalizedPhone] = true;
                 ActivityLogger::contactImported($contact);

@@ -1,19 +1,38 @@
-import React from 'react'
-import { Plus, Trash2, SlidersHorizontal } from 'lucide-react'
+import React, { useEffect, useRef, useState } from 'react'
+import { Plus, Trash2, SlidersHorizontal, Users } from 'lucide-react'
+import api from '../../services/api'
 import { Button } from '../../components/ui/Button'
 import { Input, Select } from '../../components/ui/Input'
+import { Spinner } from '../../components/ui/Spinner'
 import { cn } from '../../lib/cn'
 
 // ─── Field & operator config ──────────────────────────────────────────────────
 
 export const FILTER_FIELDS = [
-  { value: 'name',       label: 'Name',           valueType: 'text' },
-  { value: 'phone',      label: 'Phone',          valueType: 'text' },
-  { value: 'country',    label: 'Country (code)', valueType: 'text' },
-  { value: 'email',      label: 'Email',          valueType: 'email' },
-  { value: 'opted_in',   label: 'Opt-in status',  valueType: 'opted_in' },
-  { value: 'tag',        label: 'Tag',            valueType: 'tag' },
-  { value: 'created_at', label: 'Date added',     valueType: 'date' },
+  { value: 'name',       label: 'Name',         valueType: 'text' },
+  { value: 'phone',      label: 'Phone',        valueType: 'text' },
+  { value: 'country',    label: 'Country',      valueType: 'text' },
+  { value: 'language',   label: 'Language',     valueType: 'language' },
+  { value: 'status',     label: 'Status',       valueType: 'status' },
+  { value: 'source',     label: 'Source',       valueType: 'source' },
+  { value: 'email',      label: 'Email',        valueType: 'email' },
+  { value: 'opted_in',   label: 'Opt-in',       valueType: 'opted_in' },
+  { value: 'tag',        label: 'Tag',          valueType: 'tag' },
+  { value: 'created_at', label: 'Date added',   valueType: 'date' },
+]
+
+export const CONTACT_STATUSES = [
+  { value: 'active',          label: 'Active' },
+  { value: 'inactive',        label: 'Inactive' },
+  { value: 'interested',      label: 'Interested' },
+  { value: 'follow_up',       label: 'Follow Up' },
+  { value: 'not_interested',  label: 'Not Interested' },
+]
+
+export const CONTACT_SOURCES = [
+  { value: 'manual', label: 'Manual' },
+  { value: 'import', label: 'Import' },
+  { value: 'api',    label: 'API' },
 ]
 
 const OPERATORS = {
@@ -31,9 +50,15 @@ const OPERATORS = {
     { value: 'contains',     label: 'contains' },
     { value: 'not_contains', label: 'does not contain' },
   ],
-  opted_in: [
-    { value: 'is', label: 'is' },
+  language: [
+    { value: 'is',       label: 'is' },
+    { value: 'is_not',   label: 'is not' },
+    { value: 'has',      label: 'has a language' },
+    { value: 'not_has',  label: 'has no language' },
   ],
+  status: [{ value: 'is', label: 'is' }],
+  source: [{ value: 'is', label: 'is' }],
+  opted_in: [{ value: 'is', label: 'is' }],
   tag: [
     { value: 'has',      label: 'has specific tag' },
     { value: 'not_has',  label: 'does not have tag' },
@@ -49,29 +74,61 @@ const OPERATORS = {
 
 export const FIELD_MAP = Object.fromEntries(FILTER_FIELDS.map(f => [f.value, f]))
 
-// Operators that truly need NO value input (field-aware)
 export function needsNoValue(field, operator) {
   if (operator === 'has_any' || operator === 'has_none') return true
-  if ((field === 'email') && (operator === 'has' || operator === 'not_has')) return true
+  if (field === 'email' && (operator === 'has' || operator === 'not_has')) return true
+  if (field === 'language' && (operator === 'has' || operator === 'not_has')) return true
   return false
 }
 
 const defaultOperator = (field) => OPERATORS[FIELD_MAP[field]?.valueType ?? 'text']?.[0]?.value ?? 'contains'
 export const blankCondition = () => ({ field: 'name', operator: 'contains', value: '' })
 
-// Human-readable label for active filter chips
 export function conditionLabel(c, tags) {
   const field   = FIELD_MAP[c.field]?.label ?? c.field
   const vt      = FIELD_MAP[c.field]?.valueType ?? 'text'
   const ops     = OPERATORS[vt] ?? []
   const opLabel = ops.find(o => o.value === c.operator)?.label ?? c.operator
   if (needsNoValue(c.field, c.operator)) return `${field}: ${opLabel}`
-  if (c.field === 'opted_in')            return `Status: ${c.value === '1' ? 'Opted in' : 'Opted out'}`
+  if (c.field === 'opted_in')  return `Opt-in: ${c.value === '1' ? 'Yes' : 'No'}`
+  if (c.field === 'status')    return `Status: ${CONTACT_STATUSES.find(s => s.value === c.value)?.label ?? c.value}`
+  if (c.field === 'source')    return `Source: ${CONTACT_SOURCES.find(s => s.value === c.value)?.label ?? c.value}`
   if (c.field === 'tag') {
     const tag = tags?.find(t => String(t.id) === String(c.value))
     return `Tag ${opLabel}: ${tag?.name ?? c.value}`
   }
   return `${field} ${opLabel} "${c.value}"`
+}
+
+// ─── Real-time filter count hook ──────────────────────────────────────────────
+
+function useFilterCount(conditions, logic, search, tagFilter, optIn) {
+  const [count, setCount]     = useState(null)
+  const [loading, setLoading] = useState(false)
+  const timerRef              = useRef(null)
+
+  useEffect(() => {
+    const hasConditions = conditions.length > 0 || search || tagFilter || optIn
+    if (!hasConditions) { setCount(null); return }
+
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => {
+      setLoading(true)
+      const params = { search, tag: tagFilter, opt_in: optIn }
+      if (conditions.length > 0) {
+        params.filters      = JSON.stringify(conditions)
+        params.filter_logic = logic
+      }
+      api.get('/contacts/filter-count', { params })
+        .then(r => setCount(r.data.count))
+        .catch(() => setCount(null))
+        .finally(() => setLoading(false))
+    }, 400)
+
+    return () => clearTimeout(timerRef.current)
+  }, [conditions, logic, search, tagFilter, optIn])
+
+  return { count, loading }
 }
 
 // ─── Single condition row ─────────────────────────────────────────────────────
@@ -87,7 +144,6 @@ function ConditionRow({ condition, index, logic, tags, onChange, onRemove }) {
 
   return (
     <div className="flex items-center gap-2 flex-wrap">
-      {/* AND / OR chip */}
       <div className="w-14 shrink-0 flex justify-center">
         {index === 0 ? (
           <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Where</span>
@@ -103,70 +159,56 @@ function ConditionRow({ condition, index, logic, tags, onChange, onRemove }) {
         )}
       </div>
 
-      {/* Field selector */}
-      <Select
-        value={condition.field}
-        onChange={e => handleFieldChange(e.target.value)}
-        className="flex-1 min-w-[120px]"
-      >
+      <Select value={condition.field} onChange={e => handleFieldChange(e.target.value)} className="flex-1 min-w-[120px]">
         {FILTER_FIELDS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
       </Select>
 
-      {/* Operator selector */}
       <Select
         value={condition.operator}
-        onChange={e => onChange({
-          ...condition,
-          operator: e.target.value,
-          value: needsNoValue(condition.field, e.target.value) ? '' : condition.value,
-        })}
+        onChange={e => onChange({ ...condition, operator: e.target.value, value: needsNoValue(condition.field, e.target.value) ? '' : condition.value })}
         className="flex-1 min-w-[155px]"
       >
         {ops.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
       </Select>
 
-      {/* Value input — hidden when operator needs no value */}
       {!noValue && (
         <div className="flex-1 min-w-[120px]">
           {vt === 'opted_in' && (
-            <Select
-              value={condition.value || '1'}
-              onChange={e => onChange({ ...condition, value: e.target.value })}
-            >
+            <Select value={condition.value || '1'} onChange={e => onChange({ ...condition, value: e.target.value })}>
               <option value="1">Opted in</option>
               <option value="0">Opted out</option>
             </Select>
           )}
+          {vt === 'status' && (
+            <Select value={condition.value} onChange={e => onChange({ ...condition, value: e.target.value })}>
+              <option value="">Select status…</option>
+              {CONTACT_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </Select>
+          )}
+          {vt === 'source' && (
+            <Select value={condition.value} onChange={e => onChange({ ...condition, value: e.target.value })}>
+              <option value="">Select source…</option>
+              {CONTACT_SOURCES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </Select>
+          )}
           {vt === 'tag' && (
-            <Select
-              value={condition.value}
-              onChange={e => onChange({ ...condition, value: e.target.value })}
-            >
+            <Select value={condition.value} onChange={e => onChange({ ...condition, value: e.target.value })}>
               <option value="">Select tag…</option>
               {tags?.map(t => <option key={t.id} value={String(t.id)}>{t.name}</option>)}
             </Select>
           )}
           {vt === 'date' && (
             condition.operator === 'within_days'
-              ? <Input
-                  type="number"
-                  min="1"
-                  placeholder="e.g. 30"
-                  value={condition.value}
-                  onChange={e => onChange({ ...condition, value: e.target.value })}
-                />
-              : <Input
-                  type="date"
-                  value={condition.value}
-                  onChange={e => onChange({ ...condition, value: e.target.value })}
-                />
+              ? <Input type="number" min="1" placeholder="e.g. 30" value={condition.value} onChange={e => onChange({ ...condition, value: e.target.value })} />
+              : <Input type="date" value={condition.value} onChange={e => onChange({ ...condition, value: e.target.value })} />
           )}
-          {(vt === 'text' || vt === 'email') && (
+          {(vt === 'text' || vt === 'email' || vt === 'language') && (
             <Input
               placeholder={
-                condition.field === 'country' ? 'e.g. +44' :
-                condition.field === 'phone'   ? 'e.g. +447' :
-                condition.field === 'email'   ? 'e.g. @gmail.com' : 'value…'
+                condition.field === 'country'  ? 'e.g. United Kingdom' :
+                condition.field === 'language' ? 'e.g. German' :
+                condition.field === 'phone'    ? 'e.g. +447' :
+                condition.field === 'email'    ? 'e.g. @gmail.com' : 'value…'
               }
               value={condition.value}
               onChange={e => onChange({ ...condition, value: e.target.value })}
@@ -175,7 +217,6 @@ function ConditionRow({ condition, index, logic, tags, onChange, onRemove }) {
         </div>
       )}
 
-      {/* Remove button */}
       <button
         type="button"
         onClick={onRemove}
@@ -189,7 +230,7 @@ function ConditionRow({ condition, index, logic, tags, onChange, onRemove }) {
 
 // ─── Main panel ───────────────────────────────────────────────────────────────
 
-export function ContactFiltersPanel({ conditions, logic, tags, onChange, onLogicChange, onApply, onReset }) {
+export function ContactFiltersPanel({ conditions, logic, tags, onChange, onLogicChange, onApply, onReset, search, tagFilter, optIn }) {
   const add    = () => onChange([...conditions, blankCondition()])
   const remove = (i) => onChange(conditions.filter((_, idx) => idx !== i))
   const update = (i, c) => onChange(conditions.map((r, idx) => idx === i ? c : r))
@@ -197,9 +238,11 @@ export function ContactFiltersPanel({ conditions, logic, tags, onChange, onLogic
   const hasIncomplete = conditions.some(c => {
     const vt = FIELD_MAP[c.field]?.valueType ?? 'text'
     if (needsNoValue(c.field, c.operator)) return false
-    if (vt === 'opted_in') return false
+    if (vt === 'opted_in' || vt === 'status' || vt === 'source') return false
     return !c.value?.trim()
   })
+
+  const { count, loading: countLoading } = useFilterCount(conditions, logic, search, tagFilter, optIn)
 
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow-sm)] overflow-hidden">
@@ -215,25 +258,39 @@ export function ContactFiltersPanel({ conditions, logic, tags, onChange, onLogic
           )}
         </div>
 
-        {/* ALL / ANY toggle */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-[var(--text-tertiary)]">Match</span>
-          <div className="flex rounded-lg border border-[var(--border)] overflow-hidden text-xs">
-            {['and', 'or'].map(l => (
-              <button
-                key={l}
-                type="button"
-                onClick={() => onLogicChange(l)}
-                className={cn(
-                  'px-3 py-1 font-semibold transition-colors',
-                  logic === l
-                    ? l === 'or' ? 'bg-amber-500 text-white' : 'bg-brand-500 text-white'
-                    : 'bg-[var(--surface)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)]'
-                )}
-              >
-                {l === 'and' ? 'ALL' : 'ANY'}
-              </button>
-            ))}
+        <div className="flex items-center gap-3">
+          {/* Real-time match count */}
+          {(conditions.length > 0 || search || tagFilter || optIn) && (
+            <div className="flex items-center gap-1.5 text-xs font-medium text-[var(--text-secondary)]">
+              <Users size={12} />
+              {countLoading ? (
+                <Spinner size="xs" />
+              ) : count !== null ? (
+                <span className="text-brand-600 font-semibold">{count.toLocaleString()} matching</span>
+              ) : null}
+            </div>
+          )}
+
+          {/* ALL / ANY toggle */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-[var(--text-tertiary)]">Match</span>
+            <div className="flex rounded-lg border border-[var(--border)] overflow-hidden text-xs">
+              {['and', 'or'].map(l => (
+                <button
+                  key={l}
+                  type="button"
+                  onClick={() => onLogicChange(l)}
+                  className={cn(
+                    'px-3 py-1 font-semibold transition-colors',
+                    logic === l
+                      ? l === 'or' ? 'bg-amber-500 text-white' : 'bg-brand-500 text-white'
+                      : 'bg-[var(--surface)] text-[var(--text-secondary)] hover:bg-[var(--surface-2)]'
+                  )}
+                >
+                  {l === 'and' ? 'ALL' : 'ANY'}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       </div>
@@ -266,14 +323,8 @@ export function ContactFiltersPanel({ conditions, logic, tags, onChange, onLogic
           Add condition
         </Button>
         <div className="flex items-center gap-2">
-          <Button variant="ghost" size="sm" onClick={onReset}>
-            Reset
-          </Button>
-          <Button
-            size="sm"
-            onClick={onApply}
-            disabled={hasIncomplete}
-          >
+          <Button variant="ghost" size="sm" onClick={onReset}>Reset</Button>
+          <Button size="sm" onClick={onApply} disabled={hasIncomplete}>
             Apply filters
           </Button>
         </div>

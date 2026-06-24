@@ -4,7 +4,8 @@ import { motion } from 'framer-motion'
 import {
   Users, Send, CheckCircle2,
   DollarSign, UserX, ArrowRight, Clock, Plus,
-  TrendingUp, AlertCircle, Activity,
+  TrendingUp, AlertCircle, Activity, MousePointerClick,
+  ShieldOff, Zap,
 } from 'lucide-react'
 import api from '../services/api'
 import { PageHeader } from '../components/layout/PageHeader'
@@ -146,12 +147,14 @@ export default function DashboardPage() {
   const optOut = (stats.total_contacts ?? 0) - (stats.opted_in ?? 0)
 
   const tiles = [
-    { label: 'Total Contacts',  rawValue: stats.total_contacts,  icon: Users,             iconColor: 'bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400',     delay: 0 },
-    { label: 'Total Campaigns', rawValue: stats.total_campaigns, icon: Send,              iconColor: 'bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400', delay: 0.04 },
-    { label: 'Delivered',       rawValue: stats.total_delivered, icon: CheckCircle2,      iconColor: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400', delay: 0.08 },
-    { label: 'Delivery Rate',   rawValue: null, displayValue: `${stats.delivery_rate ?? 0}%`, icon: TrendingUp, iconColor: 'bg-purple-50 text-purple-600 dark:bg-purple-950 dark:text-purple-400', delay: 0.12 },
-    { label: 'Monthly Cost',    rawValue: null, displayValue: `${sym}${(stats.cost_this_month ?? 0).toFixed(2)}`, icon: DollarSign, iconColor: 'bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400', delay: 0.16 },
-    { label: 'Opted Out',       rawValue: optOut, icon: UserX,       iconColor: 'bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400',         delay: 0.20 },
+    { label: 'Total Contacts',  rawValue: stats.total_contacts,  icon: Users,             iconColor: 'bg-blue-50 text-blue-600 dark:bg-blue-950 dark:text-blue-400',     delay: 0,    href: '/contacts' },
+    { label: 'Opted In',        rawValue: stats.opted_in,        icon: CheckCircle2,      iconColor: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950 dark:text-emerald-400', delay: 0.04, href: '/contacts' },
+    { label: 'Total Campaigns', rawValue: stats.total_campaigns, icon: Send,              iconColor: 'bg-brand-50 text-brand-600 dark:bg-brand-950 dark:text-brand-400', delay: 0.08, href: '/campaigns' },
+    { label: 'Active Campaigns',rawValue: stats.active_campaigns,icon: Zap,              iconColor: 'bg-purple-50 text-purple-600 dark:bg-purple-950 dark:text-purple-400', delay: 0.12, href: '/campaigns' },
+    { label: 'Delivered',       rawValue: stats.total_delivered, icon: TrendingUp,        iconColor: 'bg-teal-50 text-teal-600 dark:bg-teal-950 dark:text-teal-400',     delay: 0.16, href: '/reports' },
+    { label: 'Click Rate',      rawValue: null, displayValue: `${stats.click_rate ?? 0}%`, icon: MousePointerClick, iconColor: 'bg-pink-50 text-pink-600 dark:bg-pink-950 dark:text-pink-400', delay: 0.20, href: '/reports' },
+    { label: 'Monthly Cost',    rawValue: null, displayValue: `${sym}${(stats.cost_this_month ?? 0).toFixed(2)}`, icon: DollarSign, iconColor: 'bg-amber-50 text-amber-600 dark:bg-amber-950 dark:text-amber-400', delay: 0.24, href: '/reports' },
+    { label: 'Suppressed',      rawValue: stats.suppressed,      icon: ShieldOff,         iconColor: 'bg-red-50 text-red-600 dark:bg-red-950 dark:text-red-400',         delay: 0.28, href: '/suppression' },
   ]
 
   return (
@@ -169,9 +172,15 @@ export default function DashboardPage() {
       />
 
       {/* Metrics */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-8">
         {tiles.map(t => (
-          <MetricTile key={t.label} {...t} loading={loading} />
+          t.href ? (
+            <Link key={t.label} to={t.href}>
+              <MetricTile {...t} loading={loading} />
+            </Link>
+          ) : (
+            <MetricTile key={t.label} {...t} loading={loading} />
+          )
         ))}
       </div>
 
