@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Models\GlobalBlacklist;
 use App\Models\Message;
 use App\Models\OptOut;
+use App\Models\SuppressionList;
 use App\Services\ActivityLogger;
 use App\Services\CampaignCompletionService;
 use App\Services\SmsSegmentCalculator;
@@ -57,6 +58,11 @@ class SendSmsJob implements ShouldQueue
 
         if (GlobalBlacklist::where('phone', $contact->phone)->exists()) {
             $this->markFailed($message, 'Phone is globally blacklisted', $completion);
+            return;
+        }
+
+        if (SuppressionList::where('phone', $contact->phone)->exists()) {
+            $this->markFailed($message, 'Phone is in suppression list', $completion);
             return;
         }
 

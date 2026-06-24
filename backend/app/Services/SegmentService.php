@@ -39,12 +39,22 @@ class SegmentService
             ->whereNotExists(function ($q) {
                 $q->from('global_blacklist')
                   ->whereColumn('global_blacklist.phone', 'contacts.phone');
+            })
+            ->whereNotExists(function ($q) {
+                $q->from('suppression_list')
+                  ->whereColumn('suppression_list.phone', 'contacts.phone');
             });
 
         if ($segment) {
-            $conditions = $segment->conditions ?? [];
-            $logic      = $segment->logic ?? 'and';
-            $this->applyConditions($query, $conditions, $logic);
+            // Pinned-contact segments (created from clicks or smart distribution)
+            // take precedence over filter conditions
+            if ($segment->contacts()->exists()) {
+                $query->whereIn('contacts.id', $segment->contacts()->pluck('contacts.id'));
+            } else {
+                $conditions = $segment->conditions ?? [];
+                $logic      = $segment->logic ?? 'and';
+                $this->applyConditions($query, $conditions, $logic);
+            }
         }
 
         return $query;
@@ -166,9 +176,9 @@ class SegmentService
         }
 
         match ($operator) {
-            'is_not'        => $query->where('phone', 'not like', $value . '%'),
-            'not_starts_with' => $query->where('phone', 'not like', $value . '%'),
-            default         => $query->where('phone', 'like', $value . '%'),
+            'is_not', 'not_starts_with' => $query->where('country', '!=', $value),
+            'contains'                  => $query->where('country', 'like', "%{$value}%"),
+            default                     => $query->where('country', $value),
         };
     }
 

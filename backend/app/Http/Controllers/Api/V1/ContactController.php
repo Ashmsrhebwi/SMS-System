@@ -54,7 +54,7 @@ class ContactController extends Controller
             $this->applyContactFilters($query, $filtersRaw, $filterLogic);
         }
 
-        $contacts = $query->paginate($request->integer('per_page', 50));
+        $contacts = $query->paginate(min($request->integer('per_page', 50), 500));
 
         return ContactResource::collection($contacts)->response();
     }
@@ -364,15 +364,48 @@ class ContactController extends Controller
     {
         $this->authorize('export', Contact::class);
 
-        $filter    = $request->get('filter', 'all');
-        $segmentId = $request->get('segment_id');
-        $tagId     = $request->get('tag_id');
-        $format    = $request->get('format', 'xlsx');
+        $format = $request->get('format', 'xlsx');
+        $query  = Contact::with('tags')->orderBy('name');
 
-        $export   = new ContactsExport($filter, $segmentId ? (int) $segmentId : null, $tagId ? (int) $tagId : null);
+        // Basic filters
+        if ($tagId = $request->get('tag')) {
+            $query->whereHas('tags', fn($q) => $q->where('tags.id', $tagId));
+        }
+        if ($optIn = $request->get('opt_in')) {
+            $query->where('opted_in', $optIn === '1');
+        }
+        if ($search = $request->get('search')) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('phone', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        // Segment filter
+        $segmentId = $request->get('segment_id');
+        if ($segmentId) {
+            $segment = \App\Models\Segment::find((int) $segmentId);
+            if ($segment) {
+                $service = app(\App\Services\SegmentService::class);
+                $ids = $service->getEligibleContactsQuery($segment)->pluck('id');
+                $query->whereIn('id', $ids);
+            }
+        }
+
+        // Advanced filter conditions
+        $filtersRaw = $request->input('filters', []);
+        if (is_string($filtersRaw) && $filtersRaw !== '') {
+            $filtersRaw = json_decode($filtersRaw, true) ?? [];
+        }
+        if (is_array($filtersRaw) && !empty($filtersRaw)) {
+            $this->applyContactFilters($query, $filtersRaw, $request->input('filter_logic', 'and'));
+        }
+
+        $export   = new ContactsExport($query);
         $filename = 'contacts-export-' . now()->format('Y-m-d') . '.' . $format;
 
-        AuditLogger::log('export_contacts', null, null, ['filter' => $filter, 'format' => $format]);
+        AuditLogger::log('export_contacts', null, null, ['format' => $format]);
 
         if ($format === 'csv') {
             return Excel::download($export, $filename, \Maatwebsite\Excel\Excel::CSV);
@@ -476,7 +509,7 @@ class ContactController extends Controller
     {
         $this->authorize('viewAny', Contact::class);
 
-        $rows = Contact::selectRaw('language, COUNT(*) as total')
+        $rows = Contact::selectRaw('language, COUNT(*) as total, SUM(opted_in) as opted_in_count')
             ->whereNotNull('language')
             ->where('language', '!=', '')
             ->groupBy('language')
@@ -488,6 +521,7 @@ class ContactController extends Controller
         $data = $rows->map(fn($r) => [
             'language'   => $r->language,
             'total'      => (int) $r->total,
+            'opted_in'   => (int) $r->opted_in_count,
             'percentage' => $grandTotal > 0 ? round(($r->total / $grandTotal) * 100, 1) : 0,
         ]);
 

@@ -354,13 +354,14 @@ class CampaignController extends Controller
             return response()->json(['message' => 'No contacts match the criteria.'], 422);
         }
 
-        // Build segment conditions using a tag-like approach: we store IDs as a special condition
         $segment = Segment::create([
             'name'        => $name,
             'description' => "Auto-created from campaign: {$campaign->name} ({$type})",
             'conditions'  => [],
             'logic'       => 'and',
         ]);
+
+        $segment->contacts()->attach($contactIds);
 
         AuditLogger::log('create_segment_from_clicks', $segment, null, [
             'campaign_id' => $campaign->id,

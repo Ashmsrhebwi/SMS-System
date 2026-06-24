@@ -22,6 +22,8 @@ class UpdateContactRequest extends FormRequest
             'email'    => 'nullable|email|max:255',
             'notes'    => 'nullable|string|max:1000',
             'opted_in' => 'boolean',
+            'language' => 'nullable|string|max:50',
+            'status'   => 'nullable|in:active,inactive,interested,follow_up,not_interested',
         ];
     }
 

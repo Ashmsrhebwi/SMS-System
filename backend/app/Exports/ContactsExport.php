@@ -2,44 +2,26 @@
 
 namespace App\Exports;
 
-use App\Models\Contact;
-use App\Models\Segment;
-use App\Services\SegmentService;
+use Illuminate\Database\Eloquent\Builder;
 use Maatwebsite\Excel\Concerns\FromQuery;
 use Maatwebsite\Excel\Concerns\WithHeadings;
 use Maatwebsite\Excel\Concerns\WithMapping;
 
 class ContactsExport implements FromQuery, WithHeadings, WithMapping
 {
-    public function __construct(
-        private string $filter = 'all',
-        private ?int $segmentId = null,
-        private ?int $tagId = null,
-    ) {}
+    public function __construct(private Builder $builder) {}
 
-    public function query()
+    public function query(): Builder
     {
-        $query = Contact::with('tags');
-
-        if ($this->filter === 'opted_in') {
-            $query->where('opted_in', true);
-        } elseif ($this->filter === 'segment' && $this->segmentId) {
-            $segment = Segment::find($this->segmentId);
-            if ($segment) {
-                $service = app(SegmentService::class);
-                $ids = $service->getEligibleContactsQuery($segment)->pluck('id');
-                $query->whereIn('id', $ids);
-            }
-        } elseif ($this->filter === 'tag' && $this->tagId) {
-            $query->whereHas('tags', fn($q) => $q->where('tags.id', $this->tagId));
-        }
-
-        return $query->orderBy('name');
+        return $this->builder;
     }
 
     public function headings(): array
     {
-        return ['Name', 'Phone', 'Email', 'Opted In', 'Notes', 'Last Visit', 'Created At'];
+        return [
+            'Name', 'Phone', 'Email', 'Country', 'Language', 'Status', 'Source',
+            'Opted In', 'Tags', 'Notes', 'Last Visit', 'Created At',
+        ];
     }
 
     public function map($contact): array
@@ -48,7 +30,12 @@ class ContactsExport implements FromQuery, WithHeadings, WithMapping
             $contact->name,
             $contact->phone,
             $contact->email ?? '',
+            $contact->country ?? '',
+            $contact->language ?? '',
+            $contact->status ?? '',
+            $contact->source ?? '',
             $contact->opted_in ? 'Yes' : 'No',
+            $contact->tags->pluck('name')->implode(', '),
             $contact->notes ?? '',
             $contact->last_visit?->format('Y-m-d') ?? '',
             $contact->created_at->format('Y-m-d H:i:s'),

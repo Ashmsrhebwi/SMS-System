@@ -83,6 +83,8 @@ class SmartSegmentController extends Controller
                 'logic'       => 'and',
             ]);
 
+            $segment->contacts()->attach($contacts->pluck('id')->toArray());
+
             $created[] = [
                 'id'    => $segment->id,
                 'name'  => $segment->name,

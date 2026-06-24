@@ -102,7 +102,7 @@ class SuppressionController extends Controller
 
         return response()->json([
             'total'     => SuppressionList::count(),
-            'by_reason' => $byReason,
+            'by_reason' => $byReason->pluck('count', 'reason')->toArray(),
             'trend'     => $trend,
         ]);
     }
