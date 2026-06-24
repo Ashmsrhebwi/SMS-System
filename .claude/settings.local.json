@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($certs = Get-ChildItem -Path Cert:\\\\LocalMachine\\\\Root; $pemContent = \"\"; foreach \\($cert in $certs\\) { $pemContent += \"# \" + $cert.Subject + \"`n\"; $pemContent += \"-----BEGIN CERTIFICATE-----`n\"; $pemContent += [Convert]::ToBase64String\\($cert.RawData, [System.Base64FormattingOptions]::InsertLineBreaks\\); $pemContent += \"`n-----END CERTIFICATE-----`n`n\" }; $pemContent | Out-File -FilePath \"C:\\\\Users\\\\hp3\\\\Downloads\\\\php-8.4.22-Win32-vs17-x64\\\\cacert.pem\" -Encoding ascii; Write-Output \"Exported $\\($certs.Count\\) certs\")",
+      "PowerShell(& \"C:\\\\Users\\\\hp3\\\\Downloads\\\\php-8.4.22-Win32-vs17-x64\\\\php.exe\" -r \"echo ini_get\\('curl.cainfo'\\);\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\('extra',{}\\), indent=2\\)\\)\")",
+      "Bash(node -e \"const d=require\\('/dev/stdin'\\); const s=d.packages.find\\(p=>p.name==='laravel/sanctum'\\); console.log\\(JSON.stringify\\(s?.extra?.laravel,null,2\\)\\)\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\hp3\\\\OneDrive\\\\Masaüstü\\\\Projects\\\\SMS System\\\\SMS_System\" -Directory)",
+      "Bash(Select-Object Name)",
+      "Bash(grep -E \"\\\\.php$\")",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/spa)",
+      "PowerShell($logFile = \"c:\\\\Users\\\\hp3\\\\OneDrive\\\\Masaüstü\\\\Projects\\\\SMS System\\\\backend\\\\storage\\\\logs\\\\laravel-2026-06-10.log\"; $lines = Get-Content $logFile; $recent = $lines | Select-Object -Last 30; $errors = $recent | Where-Object { $_ -match '\\\\.\\(ERROR|WARNING\\)' }; if \\($errors\\) { Write-Host \"ERRORS FOUND:\"; $errors } else { Write-Host \"No errors in recent log entries \\(last 30 lines\\)\" }; Write-Host \"`n--- Last 10 log lines ---\"; $lines | Select-Object -Last 10)"
+    ]
+  }
+}
