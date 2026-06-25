@@ -11,7 +11,9 @@ class ContactResource extends JsonResource
     {
         if (!$phone) return null;
         if ($request->user()?->isAdmin()) return $phone;
-        return substr($phone, 0, -4) . '****';
+        $len = strlen($phone);
+        if ($len <= 7) return str_repeat('*', $len);
+        return substr($phone, 0, 5) . str_repeat('*', max(4, $len - 7)) . substr($phone, -2);
     }
 
     public function toArray(Request $request): array

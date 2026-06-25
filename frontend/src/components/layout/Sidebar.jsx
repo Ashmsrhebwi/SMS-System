@@ -5,6 +5,7 @@ import {
   LayoutDashboard, Send, Users, FileText, Tag, Target,
   BarChart3, UserCog, ChevronLeft, ChevronRight,
   Zap, Settings, ClipboardList, Ban, ShieldOff, Layers,
+  MessageSquare, Activity,
 } from 'lucide-react'
 import { cn } from '../../lib/cn'
 import { useAuth } from '../../context/AuthContext'
@@ -14,6 +15,7 @@ const NAV = [
   { to: '/',               label: 'Dashboard',       icon: LayoutDashboard, end: true },
   { to: '/campaigns',      label: 'Campaigns',       icon: Send },
   { to: '/contacts',       label: 'Contacts',        icon: Users },
+  { to: '/messages',       label: 'Message Log',     icon: MessageSquare },
   { to: '/templates',      label: 'Templates',       icon: FileText },
   { to: '/tags',           label: 'Tags',            icon: Tag },
   { to: '/segments',       label: 'Segments',        icon: Target },
@@ -23,6 +25,7 @@ const NAV = [
 
 const ADMIN_NAV = [
   { to: '/users',       label: 'Users',       icon: UserCog },
+  { to: '/monitoring',  label: 'Monitoring',  icon: Activity },
   { to: '/audit-logs',  label: 'Audit Logs',  icon: ClipboardList },
   { to: '/blacklist',   label: 'Blacklist',   icon: Ban },
   { to: '/suppression', label: 'Suppression', icon: ShieldOff },

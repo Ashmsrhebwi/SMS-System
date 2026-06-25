@@ -26,6 +26,8 @@ import AuditLogsPage      from './pages/AuditLogsPage'
 import BlacklistPage      from './pages/BlacklistPage'
 import SuppressionPage    from './pages/SuppressionPage'
 import SmartSegmentPage   from './pages/SmartSegmentPage'
+import MessagesPage       from './pages/MessagesPage'
+import MonitoringPage     from './pages/MonitoringPage'
 import NotFoundPage       from './pages/NotFoundPage'
 
 function RequireAuth({ children }) {
@@ -72,6 +74,8 @@ export default function App() {
                 <Route path="blacklist"      element={<BlacklistPage />} />
                 <Route path="suppression"      element={<SuppressionPage />} />
                 <Route path="smart-segments"  element={<SmartSegmentPage />} />
+                <Route path="messages"        element={<MessagesPage />} />
+                <Route path="monitoring"      element={<MonitoringPage />} />
               </Route>
 
               <Route path="*" element={<NotFoundPage />} />

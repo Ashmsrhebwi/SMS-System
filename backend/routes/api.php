@@ -6,12 +6,15 @@ use App\Http\Controllers\Api\V1\BlacklistController;
 use App\Http\Controllers\Api\V1\CampaignController;
 use App\Http\Controllers\Api\V1\ContactController;
 use App\Http\Controllers\Api\V1\DashboardController;
+use App\Http\Controllers\Api\V1\MessageLogController;
 use App\Http\Controllers\Api\V1\ProfileController;
 use App\Http\Controllers\Api\V1\ReportController;
 use App\Http\Controllers\Api\V1\SearchController;
 use App\Http\Controllers\Api\V1\SegmentController;
 use App\Http\Controllers\Api\V1\SmartSegmentController;
 use App\Http\Controllers\Api\V1\SuppressionController;
+use App\Http\Controllers\Api\V1\SystemHealthController;
+use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\TagController;
 use App\Http\Controllers\Api\V1\TemplateCategoryController;
 use App\Http\Controllers\Api\V1\TemplateController;
@@ -119,5 +122,17 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
 
         // Global Search
         Route::get('search',                   SearchController::class);
+
+        // Message Log Center (admin and staff, phones masked for staff)
+        Route::get('messages',         [MessageLogController::class, 'index']);
+        Route::get('messages/{message}', [MessageLogController::class, 'show']);
+
+        // System Health (admin only)
+        Route::get('system/health',    [SystemHealthController::class, 'index']);
+
+        // System Settings (admin only)
+        Route::get('system/settings',        [SystemSettingController::class, 'index']);
+        Route::put('system/settings/{key}',  [SystemSettingController::class, 'update']);
+        Route::post('system/settings/bulk',  [SystemSettingController::class, 'bulkUpdate']);
     });
 });
