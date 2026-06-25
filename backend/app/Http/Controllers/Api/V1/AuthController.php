@@ -3,13 +3,16 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\SecurityLog;
 use App\Models\User;
+use App\Notifications\AdminAlertNotification;
 use App\Services\OtpService;
 use App\Services\SecurityLogger;
 use Illuminate\Auth\Events\PasswordReset;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\RateLimiter;
@@ -49,6 +52,7 @@ class AuthController extends Controller
         if (!Hash::check($request->input('password'), $hash) || !$user) {
             RateLimiter::hit($throttleKey, 60);
             $this->securityLogger->loginFailed($request->input('email'));
+            $this->checkAndAlertBruteForce($request->ip(), $request->input('email'));
             return response()->json(['message' => __('auth.failed')], 401);
         }
 
@@ -240,5 +244,42 @@ class AuthController extends Controller
         [$local, $domain] = explode('@', $email, 2);
         $visible = substr($local, 0, min(2, strlen($local)));
         return $visible . str_repeat('*', max(0, strlen($local) - 2)) . '@' . $domain;
+    }
+
+    /**
+     * Detect brute-force attacks and alert admins once per IP per hour.
+     * Counts recent failed logins in the security_logs table.
+     */
+    private function checkAndAlertBruteForce(string $ip, string $email): void
+    {
+        $cacheKey = "brute_force_alerted:{$ip}";
+
+        // Only alert once per hour per IP to avoid notification spam
+        if (Cache::has($cacheKey)) {
+            return;
+        }
+
+        $recentFailures = SecurityLog::where('ip_address', $ip)
+            ->where('event', SecurityLog::EVENT_LOGIN_FAILED)
+            ->where('created_at', '>=', now()->subMinutes(10))
+            ->count();
+
+        if ($recentFailures >= 10) {
+            Cache::put($cacheKey, true, now()->addHour());
+
+            AdminAlertNotification::sendToAdmins(
+                'brute_force_detected',
+                'Possible Brute-Force Login Attack',
+                "{$recentFailures} failed login attempts from IP {$ip} in the last 10 minutes",
+                [
+                    'IP Address'       => $ip,
+                    'Target Email'     => $email,
+                    'Failed Attempts'  => $recentFailures,
+                    'Period'           => 'Last 10 minutes',
+                    'Recommendation'   => 'Consider blocking this IP at the firewall level.',
+                ],
+                'critical'
+            );
+        }
     }
 }

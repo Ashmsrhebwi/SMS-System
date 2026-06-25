@@ -26,6 +26,9 @@ export default function CampaignsPage() {
     setLoading(true)
     api.get('/campaigns', { params: { page: p, search, status: status === 'all' ? '' : status } })
       .then(r => setData(r.data))
+      .catch(() => {
+        // Keep existing data on error; loading indicator will clear
+      })
       .finally(() => setLoading(false))
   }
 

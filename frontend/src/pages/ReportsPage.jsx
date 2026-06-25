@@ -90,26 +90,36 @@ export default function ReportsPage() {
   const sym = costs?.summary?.currency_symbol ?? '$'
 
   useEffect(() => {
-    if (user?.role !== 'admin') return
+    // Wait until user is resolved before making any API calls
+    if (!user) return
+    if (user.role !== 'admin') { setLoading(false); return }
+
     setLoading(true)
     Promise.all([
       api.get('/reports/costs'),
       api.get('/reports/countries'),
       api.get('/reports/languages'),
       api.get('/reports/summary'),
-    ]).then(([c, k, l, s]) => {
-      setCosts(c.data)
-      setCoun(k.data.data?.slice(0, 10) ?? [])
-      setLang(l.data.data?.slice(0, 10) ?? [])
-      setSummary(s.data)
-    }).finally(() => setLoading(false))
+    ])
+      .then(([c, k, l, s]) => {
+        setCosts(c.data)
+        setCoun(k.data.data?.slice(0, 10) ?? [])
+        setLang(l.data.data?.slice(0, 10) ?? [])
+        setSummary(s.data)
+      })
+      .catch(() => {
+        // Data remains null — empty states will render
+      })
+      .finally(() => setLoading(false))
   }, [user])
 
   useEffect(() => {
-    if (user?.role !== 'admin') return
+    if (!user || user.role !== 'admin') return
     const params = { period }
     if (period === 'daily') params.days = 30
-    api.get('/reports/delivery', { params }).then(r => setDel(r.data.data ?? []))
+    api.get('/reports/delivery', { params })
+      .then(r => setDel(r.data.data ?? []))
+      .catch(() => {})
   }, [period, user])
 
   if (user?.role !== 'admin') {

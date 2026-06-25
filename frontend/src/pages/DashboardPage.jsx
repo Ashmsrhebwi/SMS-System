@@ -136,10 +136,15 @@ export default function DashboardPage() {
     Promise.all([
       api.get('/dashboard'),
       api.get('/reports/delivery', { params: { days: 30 } }),
-    ]).then(([d, dl]) => {
-      setData(d.data)
-      setDelivery(dl.data.data ?? [])
-    }).finally(() => setLoading(false))
+    ])
+      .then(([d, dl]) => {
+        setData(d.data)
+        setDelivery(dl.data.data ?? [])
+      })
+      .catch(() => {
+        // Silently fail — dashboard remains in skeleton state
+      })
+      .finally(() => setLoading(false))
   }, [])
 
   const stats = data?.stats ?? {}

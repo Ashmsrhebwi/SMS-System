@@ -87,17 +87,25 @@ class SendSmsJob implements ShouldQueue
 
             ActivityLogger::smsSent($message);
 
+        } catch (\Twilio\Exceptions\RestException $e) {
+            // Twilio-specific error — log the code, not the full message (may contain credentials)
+            $reason = "Twilio error {$e->getStatusCode()}: {$e->getMessage()}";
+            Log::warning('SMS send failed — Twilio error', [
+                'message_id'   => $this->messageId,
+                'twilio_code'  => $e->getStatusCode(),
+                'error'        => $e->getMessage(),
+            ]);
+            $this->markFailed($message, $reason, $completion);
+
         } catch (\Exception $e) {
-            Log::error('SMS send failed', [
+            // Non-Twilio exception (network, config, etc.)
+            Log::error('SMS send failed — unexpected error', [
                 'message_id' => $this->messageId,
                 'error'      => $e->getMessage(),
             ]);
+            $this->markFailed($message, 'Send error: ' . $e->getMessage(), $completion);
 
-            // Mark failed and check campaign completion
-            // This message will never get a Twilio webhook, so we check completion here
-            $this->markFailed($message, $e->getMessage(), $completion);
-
-            // Do NOT re-throw — the failure is recorded. No retry needed.
+            // Do NOT re-throw — failure is recorded. No retry needed.
         }
     }
 

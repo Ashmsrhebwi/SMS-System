@@ -6,6 +6,7 @@ use App\Models\Campaign;
 use App\Models\Click;
 use App\Models\Message;
 use App\Models\Segment;
+use App\Notifications\AdminAlertNotification;
 use App\Services\ActivityLogger;
 use App\Services\SegmentService;
 use Illuminate\Bus\Queueable;
@@ -118,6 +119,18 @@ class DispatchCampaignJob implements ShouldQueue
             'campaign_id' => $this->campaignId,
             'error'       => $exception->getMessage(),
         ]);
+
+        AdminAlertNotification::sendToAdmins(
+            'dispatch_failed',
+            'Campaign Dispatch Failed',
+            "Campaign #{$this->campaignId} failed during dispatch",
+            [
+                'Campaign ID' => $this->campaignId,
+                'Error'       => Str::limit($exception->getMessage(), 300),
+                'Action'      => 'Campaign has been reset to Draft — please retry from the Campaigns page.',
+            ],
+            'critical'
+        );
     }
 
     private function personalizeMessage(
@@ -139,7 +152,8 @@ class DispatchCampaignJob implements ShouldQueue
         );
 
         if ($optOutText) {
-            $optOutUrl    = route('optout.form', ['campaign' => $campaignId, 'contact' => $contactId]);
+            $sig          = hash_hmac('sha256', "campaign={$campaignId}&contact={$contactId}", config('app.key'));
+            $optOutUrl    = route('optout.form', ['campaign' => $campaignId, 'contact' => $contactId, 'sig' => $sig]);
             $optOutLine   = str_replace('{opt_out_url}', $optOutUrl, $optOutText);
             $personalized .= "\n" . $optOutLine;
         }

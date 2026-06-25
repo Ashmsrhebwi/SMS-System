@@ -13,6 +13,7 @@ use App\Models\ContactNote;
 use App\Models\Message;
 use App\Models\SuppressionList;
 use App\Models\Tag;
+use App\Notifications\AdminAlertNotification;
 use App\Services\ActivityLogger;
 use App\Services\AuditLogger;
 use App\Services\CountryDetectorService;
@@ -244,12 +245,33 @@ class ContactController extends Controller
         $import = new ContactsImport($request->get('duplicate_action', 'skip'));
         Excel::import($import, $request->file('file'));
 
+        $errorCount = count($import->errors);
+        $totalRows  = $import->imported + $import->updated + count($import->duplicates) + $errorCount;
+
         AuditLogger::log('import_contacts', null, null, [
             'imported'   => $import->imported,
             'updated'    => $import->updated,
             'duplicates' => count($import->duplicates),
-            'errors'     => count($import->errors),
+            'errors'     => $errorCount,
         ]);
+
+        // Alert admins if errors exceed 20% of total rows (indicates a systemic issue)
+        if ($errorCount > 0 && $totalRows > 0 && ($errorCount / $totalRows) >= 0.20) {
+            AdminAlertNotification::sendToAdmins(
+                'import_high_errors',
+                'Contact Import — High Error Rate',
+                "Import finished with {$errorCount} errors out of {$totalRows} rows",
+                [
+                    'Imported'    => $import->imported,
+                    'Updated'     => $import->updated,
+                    'Duplicates'  => count($import->duplicates),
+                    'Errors'      => $errorCount,
+                    'Error Rate'  => round(($errorCount / $totalRows) * 100, 1) . '%',
+                    'Performed By' => auth()->user()?->name . ' (' . auth()->user()?->email . ')',
+                ],
+                'warning'
+            );
+        }
 
         return response()->json([
             'message'    => 'Import complete.',

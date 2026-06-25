@@ -16,22 +16,23 @@
 
     <form method="POST" action="{{ route('optout.process') }}">
         @csrf
+
+        {{-- Signed identifiers — validated server-side, never editable by the user --}}
+        <input type="hidden" name="campaign_id" value="{{ $campaign?->id }}">
+        <input type="hidden" name="contact_id"  value="{{ $contact?->id }}">
+        <input type="hidden" name="sig"          value="{{ $sig }}">
+
         @if($contact)
-            <input type="hidden" name="phone" value="{{ $contact->phone }}">
             <div class="bg-gray-50 rounded-lg p-3 mb-4 text-sm text-gray-600">
-                Unsubscribing: <span class="font-medium">{{ $contact->name }}</span> ({{ $contact->phone }})
-            </div>
-        @else
-            <div class="mb-4">
-                <label class="block text-sm font-medium text-gray-700 mb-1">Your phone number</label>
-                <input type="text" name="phone" placeholder="+44 7XXX XXXXXX"
-                       class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                Unsubscribing: <span class="font-medium">{{ $contact->name }}</span>
             </div>
         @endif
 
         <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 mb-1">Reason (optional)</label>
-            <textarea name="reason" rows="2" class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500" placeholder="Optional: let us know why..."></textarea>
+            <textarea name="reason" rows="2"
+                      class="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                      placeholder="Optional: let us know why..."></textarea>
         </div>
 
         <button type="submit" class="bg-red-600 text-white w-full px-4 py-2.5 rounded-lg text-sm font-medium hover:bg-red-700 transition">

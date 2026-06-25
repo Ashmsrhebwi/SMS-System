@@ -49,21 +49,31 @@ class TrackingController extends Controller
             return true;
         }
 
-        // Explicit loopback/hostname checks
-        if (in_array(strtolower($host), ['localhost', 'ip6-localhost', 'ip6-loopback'], true)) {
+        // Explicit loopback/hostname checks (covers IPv6 loopback aliases too)
+        if (in_array(strtolower($host), ['localhost', 'ip6-localhost', 'ip6-loopback', '0.0.0.0'], true)) {
             return true;
         }
 
-        // Resolve to IP (getaddrinfo equivalent via PHP)
-        $ip = filter_var($host, FILTER_VALIDATE_IP)
-            ? $host
-            : gethostbyname($host);
-
-        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
-            return false; // could not resolve — allow, let HTTP fail naturally
+        // If it's already a raw IP, validate it directly
+        if (filter_var($host, FILTER_VALIDATE_IP)) {
+            $ip = $host;
+        } else {
+            // Resolve hostname to IP; gethostbyname() returns the original string on failure
+            $resolved = gethostbyname($host);
+            if ($resolved === $host) {
+                // Could not resolve — block to be safe (fail closed, not fail open)
+                return true;
+            }
+            $ip = $resolved;
         }
 
-        // Block private ranges (10.x, 172.16–31.x, 192.168.x), loopback (127.x), link-local (169.254.x), reserved
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            // Not a valid IP after resolution — block
+            return true;
+        }
+
+        // Block private ranges (10.x, 172.16–31.x, 192.168.x),
+        // loopback (127.x), link-local (169.254.x), and reserved ranges
         return !filter_var(
             $ip,
             FILTER_VALIDATE_IP,

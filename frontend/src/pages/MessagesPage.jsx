@@ -179,6 +179,9 @@ export default function MessagesPage() {
 
     api.get('/messages', { params })
       .then(r => setData(r.data))
+      .catch(() => {
+        // Keep existing data on error
+      })
       .finally(() => setLoad(false))
   }, [search, status, dateFrom, dateTo, clicked])
 

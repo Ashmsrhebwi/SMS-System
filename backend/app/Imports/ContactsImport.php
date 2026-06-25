@@ -5,6 +5,8 @@ namespace App\Imports;
 use App\Models\Contact;
 use App\Models\GlobalBlacklist;
 use App\Models\OptOut;
+use App\Models\SuppressionList;
+use App\Notifications\AdminAlertNotification;
 use App\Services\ActivityLogger;
 use App\Services\CountryDetectorService;
 use App\Services\PhoneNormalizerService;
@@ -73,16 +75,17 @@ class ContactsImport implements ToCollection, WithHeadingRow
                 continue;
             }
 
-            // Blacklist / opt-out check
+            // Blacklist / opt-out / suppression check — all three lists
             $isBlacklisted = GlobalBlacklist::where('phone', $normalizedPhone)->exists()
-                          || OptOut::where('phone', $normalizedPhone)->exists();
+                          || OptOut::where('phone', $normalizedPhone)->exists()
+                          || SuppressionList::where('phone', $normalizedPhone)->exists();
             if ($isBlacklisted) {
                 $this->errors[] = [
                     'row'    => $rowNum,
                     'name'   => $name,
                     'phone'  => $normalizedPhone,
                     'email'  => $email ?: null,
-                    'reason' => 'Phone is on the opt-out / blacklist',
+                    'reason' => 'Phone is on the opt-out / blacklist / suppression list',
                 ];
                 continue;
             }
