@@ -33,7 +33,7 @@ class AuditLogController extends Controller
             $query->where('user_id', $userId);
         }
 
-        $logs = $query->paginate($request->integer('per_page', 50));
+        $logs = $query->paginate(min($request->integer('per_page', 50), 200));
 
         return AuditLogResource::collection($logs)->response();
     }

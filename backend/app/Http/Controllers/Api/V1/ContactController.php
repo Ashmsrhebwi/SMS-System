@@ -50,6 +50,8 @@ class ContactController extends Controller
             $filtersRaw = json_decode($filtersRaw, true) ?? [];
         }
         if (is_array($filtersRaw) && !empty($filtersRaw)) {
+            // Cap at 20 conditions to prevent excessive query complexity
+            $filtersRaw  = array_slice($filtersRaw, 0, 20);
             $filterLogic = $request->input('filter_logic', 'and');
             $this->applyContactFilters($query, $filtersRaw, $filterLogic);
         }
@@ -447,7 +449,7 @@ class ContactController extends Controller
 
     public function bulkSuppress(Request $request): JsonResponse
     {
-        $this->authorize('viewAny', Contact::class);
+        $this->authorize('bulkSuppress', Contact::class);
 
         $data = $request->validate([
             'ids'    => 'required|array|min:1',

@@ -46,4 +46,9 @@ class ContactPolicy
     {
         return $user->isAdmin();
     }
+
+    public function bulkSuppress(User $user): bool
+    {
+        return $user->isAdmin();
+    }
 }

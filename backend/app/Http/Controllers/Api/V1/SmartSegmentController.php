@@ -16,6 +16,8 @@ class SmartSegmentController extends Controller
      */
     public function preview(Request $request): JsonResponse
     {
+        abort_unless(auth()->user()->isAdmin(), 403);
+
         $data = $request->validate([
             'group_size' => 'required|integer|min:1|max:10000',
             'filters'    => 'nullable|array',

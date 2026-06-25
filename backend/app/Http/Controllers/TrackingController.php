@@ -28,10 +28,46 @@ class TrackingController extends Controller
         }
 
         $parsed = parse_url($click->target_url);
-        if (!in_array($parsed['scheme'] ?? '', ['http', 'https'], true)) {
+        $scheme = $parsed['scheme'] ?? '';
+        $host   = $parsed['host'] ?? '';
+
+        if (!in_array($scheme, ['http', 'https'], true)) {
             abort(400, 'Invalid redirect target.');
         }
 
-        return redirect($click->target_url);
+        // Prevent SSRF — block redirects to private/reserved IP ranges and localhost
+        if ($this->isPrivateOrLoopback($host)) {
+            abort(400, 'Redirect to internal addresses is not permitted.');
+        }
+
+        return redirect()->away($click->target_url, 302);
+    }
+
+    private function isPrivateOrLoopback(string $host): bool
+    {
+        if ($host === '') {
+            return true;
+        }
+
+        // Explicit loopback/hostname checks
+        if (in_array(strtolower($host), ['localhost', 'ip6-localhost', 'ip6-loopback'], true)) {
+            return true;
+        }
+
+        // Resolve to IP (getaddrinfo equivalent via PHP)
+        $ip = filter_var($host, FILTER_VALIDATE_IP)
+            ? $host
+            : gethostbyname($host);
+
+        if (!filter_var($ip, FILTER_VALIDATE_IP)) {
+            return false; // could not resolve — allow, let HTTP fail naturally
+        }
+
+        // Block private ranges (10.x, 172.16–31.x, 192.168.x), loopback (127.x), link-local (169.254.x), reserved
+        return !filter_var(
+            $ip,
+            FILTER_VALIDATE_IP,
+            FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE
+        );
     }
 }

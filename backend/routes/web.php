@@ -23,9 +23,9 @@ use Illuminate\Support\Facades\Route;
 Route::get('/', fn() => redirect('/spa'));
 
 // Public routes
-Route::get('/r/{token}', [TrackingController::class, 'click'])->name('track.click');
-Route::get('/optout', [OptOutController::class, 'form'])->name('optout.form');
-Route::post('/optout', [OptOutController::class, 'process'])->name('optout.process');
+Route::get('/r/{token}', [TrackingController::class, 'click'])->name('track.click')->middleware('throttle:60,1');
+Route::get('/optout', [OptOutController::class, 'form'])->name('optout.form')->middleware('throttle:30,1');
+Route::post('/optout', [OptOutController::class, 'process'])->name('optout.process')->middleware('throttle:10,1');
 
 // Twilio webhook — public but signature-validated inside controller
 Route::post('/webhooks/twilio/status', [WebhookController::class, 'twilioStatus'])

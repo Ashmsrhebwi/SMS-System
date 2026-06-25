@@ -35,8 +35,9 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
     });
 
     // ── Authenticated ─────────────────────────────────────────────────────────
-    Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureApiUserIsActive::class])->group(function () {
-        Route::post('auth/logout', [AuthController::class, 'logout']);
+    Route::middleware(['auth:sanctum', \App\Http\Middleware\EnsureApiUserIsActive::class, 'throttle:api'])->group(function () {
+        Route::post('auth/logout',     [AuthController::class, 'logout']);
+        Route::post('auth/logout-all', [AuthController::class, 'logoutAll']);
         Route::get('auth/me', [AuthController::class, 'me']);
 
         // Dashboard
@@ -54,8 +55,8 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
         Route::post('campaigns/{campaign}/create-segment-from-clicks', [CampaignController::class, 'createSegmentFromClicks']);
 
         // Contacts — literal routes MUST come before apiResource to avoid {contact} capture
-        Route::post('contacts/import',         [ContactController::class, 'import'])->name('contacts.import');
-        Route::get('contacts/export',          [ContactController::class, 'export'])->name('contacts.export');
+        Route::post('contacts/import',         [ContactController::class, 'import'])->name('contacts.import')->middleware('throttle:import');
+        Route::get('contacts/export',          [ContactController::class, 'export'])->name('contacts.export')->middleware('throttle:export');
         Route::get('contacts/check-duplicate', [ContactController::class, 'checkDuplicate'])->name('contacts.check-duplicate');
         Route::post('contacts/bulk-delete',    [ContactController::class, 'bulkDelete'])->name('contacts.bulk-delete');
         Route::post('contacts/bulk-update',    [ContactController::class, 'bulkUpdate'])->name('contacts.bulk-update');

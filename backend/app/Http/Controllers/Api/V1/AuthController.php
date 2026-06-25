@@ -41,7 +41,12 @@ class AuthController extends Controller
 
         $user = User::where('email', $request->input('email'))->first();
 
-        if (!$user || !Hash::check($request->input('password'), $user->password)) {
+        // Always run a bcrypt comparison regardless of whether the user exists.
+        // This prevents user-enumeration via response-time (timing oracle).
+        $dummyHash = '$2y$12$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi';
+        $hash      = $user?->password ?? $dummyHash;
+
+        if (!Hash::check($request->input('password'), $hash) || !$user) {
             RateLimiter::hit($throttleKey, 60);
             $this->securityLogger->loginFailed($request->input('email'));
             return response()->json(['message' => __('auth.failed')], 401);
@@ -206,6 +211,14 @@ class AuthController extends Controller
         $request->user()->currentAccessToken()->delete();
 
         return response()->json(['message' => 'Logged out successfully.']);
+    }
+
+    public function logoutAll(Request $request): JsonResponse
+    {
+        $this->securityLogger->logout(Auth::user());
+        $request->user()->tokens()->delete();
+
+        return response()->json(['message' => 'Logged out from all devices successfully.']);
     }
 
     public function me(Request $request): JsonResponse

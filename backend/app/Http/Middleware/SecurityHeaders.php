@@ -23,23 +23,26 @@ class SecurityHeaders
         );
 
         // Content Security Policy
-        // unsafe-inline for scripts: several Blade views contain inline <script> blocks.
-        //   To remove it, extract those blocks into app.js as Alpine.data() components.
-        // unsafe-eval required for Alpine.js expression evaluation (x-data, x-on, etc.)
+        // unsafe-inline for scripts: Blade views contain inline <script> blocks.
+        //   To fully harden: extract inline scripts and use nonce-based CSP.
+        // unsafe-eval removed: React production build does not need eval().
+        //   If any third-party library requires eval, list it here explicitly.
         // The remaining directives (frame-ancestors, form-action, object-src, base-uri)
         //   provide meaningful protection independent of script-src.
         $response->headers->set('Content-Security-Policy', implode('; ', [
             "default-src 'self'",
-            "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+            "script-src 'self' 'unsafe-inline'",
             "style-src 'self' 'unsafe-inline' https://fonts.bunny.net",
             "font-src 'self' https://fonts.bunny.net",
             "img-src 'self' data: https:",
             "connect-src 'self'",
+            "worker-src 'none'",
             "frame-src 'none'",
             "frame-ancestors 'none'",
             "object-src 'none'",
             "base-uri 'self'",
             "form-action 'self'",
+            "upgrade-insecure-requests",
         ]));
 
         // Remove fingerprinting headers

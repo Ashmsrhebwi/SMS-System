@@ -18,9 +18,9 @@ class UpdateUserRequest extends FormRequest
 
         return [
             'name'      => 'required|string|max:255',
-            'email'     => "required|email|max:255|unique:users,email,{$userId}",
-            'password'  => ['nullable', 'confirmed', Password::min(8)],
-            'role'      => 'required|in:admin,standard',
+            'email'     => "required|email:rfc,dns|max:255|unique:users,email,{$userId}",
+            'password'  => ['nullable', 'confirmed', Password::defaults()],
+            'role'      => 'required|in:admin,staff',
             'is_active' => 'boolean',
         ];
     }
