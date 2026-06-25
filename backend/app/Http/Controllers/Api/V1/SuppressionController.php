@@ -28,7 +28,7 @@ class SuppressionController extends Controller
             $query->where('reason', 'like', "%{$reason}%");
         }
 
-        $items = $query->paginate($request->integer('per_page', 50));
+        $items = $query->paginate(min($request->integer('per_page', 50), 200));
 
         $summary = [
             'total'             => SuppressionList::count(),

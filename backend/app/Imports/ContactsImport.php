@@ -110,11 +110,15 @@ class ContactsImport implements ToCollection, WithHeadingRow
                     if (!empty($row['last_visit'])) {
                         try { $lastVisit = \Carbon\Carbon::parse($row['last_visit'])->format('Y-m-d'); } catch (\Exception) {}
                     }
+                    $validStatuses = ['active', 'inactive', 'interested', 'follow_up', 'not_interested'];
                     $existing->update([
                         'name'       => $name,
                         'email'      => $email ?: $existing->email,
                         'notes'      => $notes ?: $existing->notes,
                         'last_visit' => $lastVisit ?? $existing->getRawOriginal('last_visit'),
+                        'language'   => $language ?: $existing->language,
+                        'status'     => in_array($status, $validStatuses) ? $status : $existing->status,
+                        'source'     => $source ?: $existing->source,
                     ]);
                     ActivityLogger::contactUpdated($existing);
                     $this->processedPhones[$normalizedPhone] = true;
