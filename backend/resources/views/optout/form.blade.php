@@ -17,9 +17,9 @@
     <form method="POST" action="{{ route('optout.process') }}">
         @csrf
 
-        {{-- Signed identifiers — validated server-side, never editable by the user --}}
-        <input type="hidden" name="campaign_id" value="{{ $campaign?->id }}">
-        <input type="hidden" name="contact_id"  value="{{ $contact?->id }}">
+        {{-- Raw IDs from the original signed URL — always set even if campaign was deleted --}}
+        <input type="hidden" name="campaign_id" value="{{ $campaignId }}">
+        <input type="hidden" name="contact_id"  value="{{ $contactId }}">
         <input type="hidden" name="sig"          value="{{ $sig }}">
 
         @if($contact)

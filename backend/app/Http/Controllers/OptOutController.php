@@ -29,7 +29,15 @@ class OptOutController extends Controller
         $campaign = Campaign::find($campaignId);
         $contact  = Contact::find($contactId);
 
-        return view('optout.form', compact('campaign', 'contact', 'sig'));
+        // Pass the raw numeric IDs (not derived from model objects) so the hidden form
+        // fields are always populated even when the campaign has since been deleted.
+        return view('optout.form', [
+            'campaign'   => $campaign,
+            'contact'    => $contact,
+            'sig'        => $sig,
+            'campaignId' => $campaignId,
+            'contactId'  => $contactId,
+        ]);
     }
 
     /**
@@ -40,8 +48,8 @@ class OptOutController extends Controller
     public function process(Request $request)
     {
         $data = $request->validate([
-            'campaign_id' => 'required|integer',
-            'contact_id'  => 'required|integer',
+            'campaign_id' => 'required|string',
+            'contact_id'  => 'required|string',
             'sig'         => 'required|string',
             'reason'      => 'nullable|string|max:500',
         ]);
@@ -51,8 +59,9 @@ class OptOutController extends Controller
             abort(403, 'This unsubscribe link is invalid or has expired.');
         }
 
-        // Phone comes from the database, NEVER from form input
-        $contact = Contact::find($data['contact_id']);
+        // Phone comes from the database, NEVER from form input.
+        // withTrashed: allow opt-out even if contact was soft-deleted after the SMS was sent.
+        $contact = Contact::withTrashed()->find($data['contact_id']);
         if (!$contact) {
             return view('optout.confirmed');
         }

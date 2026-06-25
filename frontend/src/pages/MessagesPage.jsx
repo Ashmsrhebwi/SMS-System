@@ -193,6 +193,8 @@ export default function MessagesPage() {
     try {
       const r = await api.get(`/messages/${id}`)
       setDetail(r.data)
+    } catch {
+      // Detail panel remains closed on error
     } finally {
       setDL(false)
     }
